@@ -1,12 +1,11 @@
 from pydantic import BaseModel, EmailStr
-from typing import Optional
 
 class BookingCreate(BaseModel):
     name: str
     phone: str
     email: EmailStr
     address: str
-    date: str
+    date: str  # Format: YYYY-MM-DD
     timeSlot: str
     contactPreference: str
 

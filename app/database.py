@@ -27,7 +27,30 @@ def get_week_db(date_str: str):
         )
     """)
     conn.commit()
-    return conn, db_path
+    return conn
+
+def init_user_db():
+    db_path = os.path.join(DB_DIR, "users.db")
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('superadmin', 'admin'))
+        )
+    """)
+    conn.commit()
+    return conn
+
+def get_user_db():
+    db_path = os.path.join(DB_DIR, "users.db")
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+DB_PATH = Path(__file__).parent.parent / "mh-bookings.db"
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -37,6 +60,7 @@ def get_db():
 def init_db():
     with get_db() as conn:
         c = conn.cursor()
+        # Bookings
         c.execute('''
             CREATE TABLE IF NOT EXISTS bookings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,11 +74,22 @@ def init_db():
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        # Newsletter
         c.execute('''
             CREATE TABLE IF NOT EXISTS newsletter_subscribers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 email TEXT NOT NULL UNIQUE,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        # Users
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                hashed_password TEXT NOT NULL,
+                role TEXT NOT NULL CHECK(role IN ('superadmin', 'admin')),
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
