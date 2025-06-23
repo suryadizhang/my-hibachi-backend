@@ -20,12 +20,16 @@ def get_week_db(date_str: str):
             phone TEXT,
             email TEXT,
             address TEXT,
+            city TEXT,
+            zipcode TEXT,
             date TEXT,
             time_slot TEXT,
             contact_preference TEXT,
-            created_at TEXT
+            created_at TEXT,
+            deposit_received INTEGER DEFAULT 0
         )
     """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_bookings_date_time_slot ON bookings(date, time_slot)")
     conn.commit()
     return conn
 
@@ -71,9 +75,11 @@ def init_db():
                 date TEXT NOT NULL,
                 time_slot TEXT NOT NULL,
                 contact_preference TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                deposit_received INTEGER DEFAULT 0
             )
         ''')
+        c.execute("CREATE INDEX IF NOT EXISTS idx_bookings_date_time_slot ON bookings(date, time_slot)")
         # Newsletter
         c.execute('''
             CREATE TABLE IF NOT EXISTS newsletter_subscribers (
@@ -93,4 +99,33 @@ def init_db():
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        # Waitlist
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS waitlist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                phone TEXT NOT NULL,
+                email TEXT NOT NULL,
+                preferred_date TEXT NOT NULL,
+                preferred_time TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        # Company Newsletter
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS company_newsletter (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT,
+                phone TEXT,
+                email TEXT NOT NULL UNIQUE,
+                address TEXT,
+                city TEXT,
+                zipcode TEXT,
+                last_activity_date TEXT,
+                source TEXT  -- booking, inquiry, waitlist
+            )
+        ''')
+        # After your table creation, ensure the column exists:
+        c.execute("ALTER TABLE bookings ADD COLUMN deposit_received INTEGER DEFAULT 0")
+        c.execute("SELECT * FROM waitlist ORDER BY preferred_date, preferred_time, created_at")
         conn.commit()

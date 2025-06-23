@@ -1,25 +1,34 @@
 from pydantic import BaseModel, EmailStr
 
 class BookingCreate(BaseModel):
+    """Request body for creating a new booking."""
     name: str
     phone: str
     email: EmailStr
     address: str
-    date: str  # Format: YYYY-MM-DD
-    timeSlot: str
-    contactPreference: str
-
-class Booking(BookingCreate):
-    id: int
-    created_at: str
-
-class BookingOut(BaseModel):
-    id: int
-    name: str
-    phone: str
-    email: EmailStr
-    address: str
+    city: str
+    zipcode: str
     date: str
     time_slot: str
     contact_preference: str
+
+class WaitlistCreate(BaseModel):
+    """Request body for joining the waitlist."""
+    name: str
+    phone: str
+    email: EmailStr
+    preferred_date: str
+    preferred_time: str
+
+class CancelBookingRequest(BaseModel):
+    """Request body for cancelling a booking (admin only)."""
+    reason: str
+
+class WaitlistEntry(BaseModel):
+    id: int
+    name: str
+    phone: str
+    email: EmailStr
+    preferred_date: str
+    preferred_time: str
     created_at: str
