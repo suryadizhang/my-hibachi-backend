@@ -3,6 +3,7 @@ from .email_utils import send_deposit_reminder, notify_admin_deposit_missing
 from .database import get_week_db
 import logging
 import sqlite3
+from datetime import datetime, timedelta
 
 logger = logging.getLogger("booking")
 scheduler = BackgroundScheduler()

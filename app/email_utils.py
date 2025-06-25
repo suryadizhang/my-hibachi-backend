@@ -39,11 +39,9 @@ Contact Preference: {booking.contact_preference}
     )
 
 def send_customer_confirmation(booking):
-    """Send a booking confirmation email to the customer, including deposit instructions."""
-    send_email(
-        f"Your Booking Confirmation for {booking.date} at {booking.time_slot}",
-        booking.email,
-        f"""Thank you for your booking!
+    subject = f"Your Booking Confirmation for {booking.date} at {booking.time_slot}"
+    to = booking.email
+    plain_text = f"""Thank you for your booking!
 
 Here are your details:
 Name: {booking.name}
@@ -51,12 +49,39 @@ Date: {booking.date}
 Time Slot: {booking.time_slot}
 Address: {booking.address}, {booking.city}, {booking.zipcode}
 
-To secure and lock your booking, a $100.00 deposit is required.
-Please complete your deposit within 6 hours of receiving this email, or your booking may be cancelled.
-
+To secure your booking, a $100.00 deposit is required within 6 hours.
 We look forward to serving you!
 """
-    )
+    html_content = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; color: #333;">
+        <div style="max-width: 600px; margin: 0 auto; border: 1px solid #eee; border-radius: 8px; padding: 24px;">
+          <h2 style="color: #E94F37;">My Hibachi Chef – Booking Confirmation</h2>
+          <p>Thank you for your booking!</p>
+          <ul>
+            <li><strong>Name:</strong> {booking.name}</li>
+            <li><strong>Date:</strong> {booking.date}</li>
+            <li><strong>Time Slot:</strong> {booking.time_slot}</li>
+            <li><strong>Address:</strong> {booking.address}, {booking.city}, {booking.zipcode}</li>
+          </ul>
+          <p style="color:#b71c1c;"><strong>To secure your booking, a $100 deposit is required within 6 hours.</strong></p>
+          <p>We look forward to serving you!<br/>— My Hibachi Chef Team</p>
+          <hr/>
+          <p style="font-size: 12px; color: #888;">For questions, contact us at <a href="mailto:info@myhibachichef.com">info@myhibachichef.com</a></p>
+        </div>
+      </body>
+    </html>
+    """
+    msg = EmailMessage()
+    msg['Subject'] = subject
+    msg['From'] = SMTP_USER
+    msg['To'] = to
+    msg.set_content(plain_text)
+    msg.add_alternative(html_content, subtype='html')
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASS)
+        server.send_message(msg)
 
 def send_waitlist_confirmation(waitlist):
     """Send a waitlist confirmation email to the customer."""
@@ -130,36 +155,36 @@ Thank you!
 """
     )
 
-def notify_admin_deposit_missing(booking):
-    """Notify admin if deposit has not been received after 6 hours."""
-    send_email(
-        f"Deposit Not Received for Booking {booking.name} on {booking.date} at {booking.time_slot}",
+def notify_admin_deposit_missing(booking): notify_admin_deposit_missing(booking):
+    """Notify admin if deposit has not been received after 6 hours."""""Notify admin if deposit has not been received after 6 hours."""
+    send_email(    send_email(
+        f"Deposit Not Received for Booking {booking.name} on {booking.date} at {booking.time_slot}", {booking.name} on {booking.date} at {booking.time_slot}",
         "info@myhibachichef.com",
-        f"""The following booking has not received a deposit after 6 hours:
+        f"""The following booking has not received a deposit after 6 hours: following booking has not received a deposit after 6 hours:
 
 Name: {booking.name}
 Email: {booking.email}
-Date: {booking.date}
-Time Slot: {booking.time_slot}
+Date: {booking.date}Date: {booking.date}
+Time Slot: {booking.time_slot}time_slot}
 
-Please follow up with the customer or consider cancelling the booking.
+Please follow up with the customer or consider cancelling the booking.h the customer or consider cancelling the booking.
 """
-    )
+    )    )
 
-def send_waitlist_slot_opened(waitlist_user):
-    """Notify a waitlist user that a slot has opened up."""
-    send_email(
-        f"Good News! A Slot Has Opened Up for {waitlist_user['preferred_date']} at {waitlist_user['preferred_time']}",
+def send_waitlist_slot_opened(waitlist_user): send_waitlist_slot_opened(waitlist_user):
+    """Notify a waitlist user that a slot has opened up."""""Notify a waitlist user that a slot has opened up."""
+    send_email(    send_email(
+        f"Good News! A Slot Has Opened Up for {waitlist_user['preferred_date']} at {waitlist_user['preferred_time']}", {waitlist_user['preferred_date']} at {waitlist_user['preferred_time']}",
         waitlist_user['email'],
-        f"""Hello {waitlist_user['name']},
+        f"""Hello {waitlist_user['name']},lo {waitlist_user['name']},
 
-A slot has just opened up for your requested date and time:
+A slot has just opened up for your requested date and time:our requested date and time:
 Date: {waitlist_user['preferred_date']}
-Time Slot: {waitlist_user['preferred_time']}
+Time Slot: {waitlist_user['preferred_time']}Time Slot: {waitlist_user['preferred_time']}
 
-Please reply to this email or contact us as soon as possible if you would like to claim this slot.
+Please reply to this email or contact us as soon as possible if you would like to claim this slot.s as soon as possible if you would like to claim this slot.
 
-Best regards,
+Best regards,Best regards,
 My Hibachi Chef Team
-"""
+""""""
     )

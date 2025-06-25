@@ -13,6 +13,7 @@ def get_week_db(date_str: str):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
+    # Bookings table
     c.execute("""
         CREATE TABLE IF NOT EXISTS bookings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,6 +31,20 @@ def get_week_db(date_str: str):
         )
     """)
     c.execute("CREATE INDEX IF NOT EXISTS idx_bookings_date_time_slot ON bookings(date, time_slot)")
+    # Company Newsletter table
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS company_newsletter (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            phone TEXT,
+            email TEXT NOT NULL UNIQUE,
+            address TEXT,
+            city TEXT,
+            zipcode TEXT,
+            last_activity_date TEXT,
+            source TEXT
+        )
+    """)
     conn.commit()
     return conn
 
@@ -57,8 +72,24 @@ def get_user_db():
 DB_PATH = Path(__file__).parent.parent / "mh-bookings.db"
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect("mh-bookings.db")
     conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    # Ensure company_newsletter table exists
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS company_newsletter (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            phone TEXT,
+            email TEXT NOT NULL UNIQUE,
+            address TEXT,
+            city TEXT,
+            zipcode TEXT,
+            last_activity_date TEXT,
+            source TEXT
+        )
+    """)
+    conn.commit()
     return conn
 
 def init_db():
@@ -122,10 +153,30 @@ def init_db():
                 city TEXT,
                 zipcode TEXT,
                 last_activity_date TEXT,
-                source TEXT  -- booking, inquiry, waitlist
+                source TEXT
             )
         ''')
         # After your table creation, ensure the column exists:
         c.execute("ALTER TABLE bookings ADD COLUMN deposit_received INTEGER DEFAULT 0")
         c.execute("SELECT * FROM waitlist ORDER BY preferred_date, preferred_time, created_at")
         conn.commit()
+
+# Ensure the company_newsletter table exists in the main database at startup
+conn = sqlite3.connect("mh-bookings.db")
+c = conn.cursor()
+c.execute("""
+    CREATE TABLE IF NOT EXISTS company_newsletter (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        phone TEXT,
+        email TEXT NOT NULL UNIQUE,
+        address TEXT,
+        city TEXT,
+        zipcode TEXT,
+        last_activity_date TEXT,
+        source TEXT
+    )
+""")
+conn.commit()
+conn.close()
+

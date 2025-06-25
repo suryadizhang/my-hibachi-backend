@@ -4,3 +4,8 @@ pydantic
 passlib[bcrypt]
 python-jose[cryptography]
 python-multipart
+sqlalchemy>=2.0,<3.0
+alembic>=1.11,<2.0
+pymysql
+pytest
+httpx

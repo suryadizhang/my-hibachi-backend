@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.venv/
+
+# Environment/config files
+.env
+*.env
+csbook.env
+
+# SQLite databases
+*.db
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# VS Code settings (optional)
+.vscode/
+
+# Logs
+*.log
+
+# Test/coverage output
+htmlcov/
+.coverage
+.cache/
+.pytest_cache/
+
+# Alembic
+alembic/versions/*.pyc

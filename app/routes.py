@@ -19,14 +19,25 @@ import logging
 import threading
 import time
 from .deposit_tasks import schedule_deposit_jobs
-from .utils import get_latest_user_info, upsert_newsletter_entry
+from .utils import get_latest_user_info, upsert_newsletter_entry, notify_all_waitlist_users
 from fastapi.responses import StreamingResponse
 import csv
 from io import StringIO
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from fastapi import Request
+
+router = APIRouter()
+
+# Use limiter from app.state in your endpoints
+# @limiter.limit("5/minute")
+# def your_endpoint(...):
+#     ...
 
 logger = logging.getLogger("booking")
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/booking/token")
+limiter = Limiter(key_func=get_remote_address)
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
     payload = decode_access_token(token)
@@ -75,13 +86,16 @@ def create_admin(username: str, password: str, user=Depends(superadmin_required)
         raise HTTPException(status_code=400, detail="Username already exists")
     return {"message": "Admin created"}
 
-@router.post("/book", status_code=status.HTTP_201_CREATED)
-def book_service(data: BookingCreate, background_tasks: BackgroundTasks):
+@router.post("/book")
+@limiter.limit("5/minute")
+def book_service(data: BookingCreate, background_tasks: BackgroundTasks, request: Request):
     """Create a new booking and send confirmation emails."""
     conn = get_week_db(data.date)
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM bookings WHERE date = ? AND time_slot = ?", (data.date, data.time_slot))
-    if c.fetchone()[0] >= 2:
+    count = c.fetchone()[0]
+    print(f"DEBUG: Booking count for {data.date} {data.time_slot}: {count}")  # <-- Add this line
+    if count >= 2:
         raise HTTPException(status_code=400, detail="This slot is fully booked.")
     c.execute("""
         INSERT INTO bookings (name, phone, email, address, city, zipcode, date, time_slot, contact_preference, created_at, deposit_received)
@@ -98,9 +112,10 @@ def book_service(data: BookingCreate, background_tasks: BackgroundTasks):
     background_tasks.add_task(send_customer_confirmation, data)
     schedule_deposit_jobs(booking_id, data.date)
     # Upsert newsletter entry
-    upsert_newsletter_entry(data.dict(), "booking")
+    upsert_newsletter_entry(data.model_dump(), "booking")
     return {"message": "Booking successful"}
 
+# Example for any admin route in app/routes.py
 @router.get("/admin/weekly")
 def admin_weekly(start_date: str, user=Depends(admin_required)):
     """Get all bookings for a given week (admin only)."""
@@ -167,7 +182,8 @@ def get_availability(date: str):
     return result
 
 @router.post("/waitlist")
-def join_waitlist(data: WaitlistCreate, background_tasks: BackgroundTasks):
+@limiter.limit("10/minute")  # 10 waitlist joins per minute per IP
+def join_waitlist(data: WaitlistCreate, background_tasks: BackgroundTasks, request: Request):
     """Add a user to the waitlist, send confirmation and position email."""
     from .database import get_db
     with get_db() as conn:
@@ -221,20 +237,7 @@ def cancel_booking(
                     except Exception as e:
                         logger.error(f"Failed to send cancellation email: {e}")
                     # Notify the first user on the waitlist for this slot
-                    waitlist_conn = get_db()
-                    waitlist_c = waitlist_conn.cursor()
-                    waitlist_c.execute("""
-                        SELECT * FROM waitlist
-                        WHERE preferred_date = ? AND preferred_time = ?
-                        ORDER BY created_at
-                        LIMIT 1
-                    """, (booking["date"], booking["time_slot"]))
-                    waitlist_user = waitlist_c.fetchone()
-                    if waitlist_user:
-                        try:
-                            send_waitlist_slot_opened(dict(waitlist_user))
-                        except Exception as e:
-                            logger.error(f"Failed to notify waitlist user: {e}")
+                    notify_all_waitlist_users(booking["date"], booking["time_slot"], send_waitlist_slot_opened)
                     break
     if not found:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -344,3 +347,100 @@ def export_newsletter(user=Depends(admin_required)):
         writer.writerow([row["name"], row["phone"], row["email"], row["address"], row["city"], row["zipcode"], row["last_activity_date"], row["source"]])
     output.seek(0)
     return StreamingResponse(output, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=newsletter.csv"})
+
+def notify_and_remove_waitlist_users(date, time_slot, send_func):
+    from .database import get_db
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT * FROM waitlist
+            WHERE preferred_date = ? AND preferred_time = ?
+            ORDER BY created_at
+        """, (date, time_slot))
+        users = c.fetchall()
+        for user in users:
+            try:
+                send_func(dict(user))
+                c.execute("DELETE FROM waitlist WHERE id = ?", (user["id"],))
+            except Exception as e:
+                import logging
+                logging.getLogger("booking").error(f"Failed to notify/remove waitlist user: {e}")
+        conn.commit()
+
+@router.get("/protected-data")
+@limiter.limit("2/minute")
+async def protected_data(request: Request):
+    """Example endpoint with rate limiting and dependency injection."""
+    return {"data": "protected"}
+
+# Example of logging in an endpoint
+
+@router.get("/log-demo")
+def log_demo():
+    logger.info("This is an info log from /log-demo endpoint.")
+    logger.warning("This is a warning log from /log-demo endpoint.")
+    logger.error("This is an error log from /log-demo endpoint.")
+    return {"message": "Logging demo complete."}
+
+@router.get("/admin/kpis")
+def admin_kpis(user=Depends(admin_required)):
+    """
+    Returns KPIs: total bookings, bookings this week, bookings this month, waitlist count.
+    """
+    # Calculate current week and month
+    today = datetime.now()
+    year, week, _ = today.isocalendar()
+    first_of_month = today.replace(day=1)
+    # Weekly DB path
+    db_path = os.path.join("backend/weekly_databases", f"bookings_{year}-{week:02d}.db")
+    # Monthly bookings
+    monthly_bookings = []
+    # Total bookings (all weekly DBs)
+    total_bookings = 0
+
+    # Count bookings for this week
+    week_count = 0
+    if os.path.exists(db_path):
+        with sqlite3.connect(db_path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM bookings")
+            week_count = c.fetchone()[0]
+
+    # Count bookings for this month (across all weekly DBs)
+    for fname in os.listdir("backend/weekly_databases"):
+        if fname.endswith(".db"):
+            with sqlite3.connect(os.path.join("backend/weekly_databases", fname)) as conn:
+                c = conn.cursor()
+                c.execute("SELECT date FROM bookings")
+                for (date_str,) in c.fetchall():
+                    try:
+                        d = datetime.strptime(date_str, "%Y-%m-%d")
+                        if d >= first_of_month and d.month == today.month and d.year == today.year:
+                            monthly_bookings.append(date_str)
+                        total_bookings += 1
+                    except Exception:
+                        continue
+
+    # Waitlist count
+    waitlist_count = 0
+    waitlist_db = os.path.join("backend", "mh-bookings.db")
+    if os.path.exists(waitlist_db):
+        with sqlite3.connect(waitlist_db) as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM waitlist")
+            waitlist_count = c.fetchone()[0]
+
+
+
+
+
+
+
+
+    }        "waitlist": waitlist_count        "month": len(monthly_bookings),        "week": week_count,        "total": total_bookings,    return {    return {
+        "total": total_bookings,
+        "week": week_count,
+        "month": len(monthly_bookings),
+        "waitlist": waitlist_count
+    }
+

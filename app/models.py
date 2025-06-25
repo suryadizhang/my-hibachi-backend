@@ -1,4 +1,8 @@
 from pydantic import BaseModel, EmailStr
+import sqlalchemy as sa
+from sqlalchemy.orm import declarative_base
+
+Base = declarative_base()
 
 class BookingCreate(BaseModel):
     """Request body for creating a new booking."""
@@ -32,3 +36,12 @@ class WaitlistEntry(BaseModel):
     preferred_date: str
     preferred_time: str
     created_at: str
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = sa.Column(sa.Integer, primary_key=True)
+    username = sa.Column(sa.String(255), nullable=False)
+    hashed_password = sa.Column(sa.String(255), nullable=False)
+    # If other string columns exist, also specify length, e.g.:
+    # email = sa.Column(sa.String(255), nullable=False)

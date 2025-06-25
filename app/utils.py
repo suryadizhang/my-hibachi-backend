@@ -49,3 +49,21 @@ def upsert_newsletter_entry(data, source):
             source
         ))
         conn.commit()
+
+def notify_all_waitlist_users(date, time_slot, send_func):
+    """Notify all users on the waitlist for a given slot."""
+    from .database import get_db
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT * FROM waitlist
+            WHERE preferred_date = ? AND preferred_time = ?
+            ORDER BY created_at
+        """, (date, time_slot))
+        users = c.fetchall()
+        for user in users:
+            try:
+                send_func(dict(user))
+            except Exception as e:
+                import logging
+                logging.getLogger("booking").error(f"Failed to notify waitlist user: {e}")
