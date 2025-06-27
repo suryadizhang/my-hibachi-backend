@@ -9,3 +9,7 @@ alembic>=1.11,<2.0
 pymysql
 pytest
 httpx
+slowapi
+python-dotenv
+apscheduler
+email-validator

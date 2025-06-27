@@ -34,7 +34,7 @@ def patch_send_email(monkeypatch):
 async def test_availability():
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        resp = await ac.get("/availability?date=2024-07-10")
+        resp = await ac.get("/api/booking/availability?date=2024-07-10")
         assert resp.status_code == 200
         assert isinstance(resp.json(), dict)
 
@@ -55,15 +55,15 @@ async def test_booking_and_fully_booked():
             "contact_preference": "email"
         }
         # First booking should succeed
-        resp = await ac.post("/book", json=payload)
+        resp = await ac.post("/api/booking/book", json=payload)
         print(resp.status_code, resp.json())
         assert resp.status_code in (200, 201)
         # Second booking should succeed
-        resp = await ac.post("/book", json=payload)
+        resp = await ac.post("/api/booking/book", json=payload)
         print(resp.status_code, resp.json())
         assert resp.status_code in (200, 201)
         # Third booking should fail
-        resp = await ac.post("/book", json=payload)
+        resp = await ac.post("/api/booking/book", json=payload)
         print(resp.status_code, resp.json())
         assert resp.status_code == 400
         assert resp.json().get("detail") == "This slot is fully booked."

@@ -23,7 +23,7 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Include your API router
-app.include_router(router)
+app.include_router(router, prefix="/api/booking")
 
 # Configure CORS
 app.add_middleware(

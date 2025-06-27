@@ -155,36 +155,36 @@ Thank you!
 """
     )
 
-def notify_admin_deposit_missing(booking): notify_admin_deposit_missing(booking):
-    """Notify admin if deposit has not been received after 6 hours."""""Notify admin if deposit has not been received after 6 hours."""
-    send_email(    send_email(
-        f"Deposit Not Received for Booking {booking.name} on {booking.date} at {booking.time_slot}", {booking.name} on {booking.date} at {booking.time_slot}",
+def notify_admin_deposit_missing(booking):
+    """Notify admin if deposit has not been received after 6 hours."""
+    send_email(
+        f"Deposit Not Received for Booking {booking.name} on {booking.date} at {booking.time_slot}",
         "info@myhibachichef.com",
-        f"""The following booking has not received a deposit after 6 hours: following booking has not received a deposit after 6 hours:
+        f"""The following booking has not received a deposit after 6 hours:
 
 Name: {booking.name}
 Email: {booking.email}
-Date: {booking.date}Date: {booking.date}
-Time Slot: {booking.time_slot}time_slot}
+Date: {booking.date}
+Time Slot: {booking.time_slot}
 
-Please follow up with the customer or consider cancelling the booking.h the customer or consider cancelling the booking.
+Please follow up with the customer or consider cancelling the booking.
 """
-    )    )
+    )
 
-def send_waitlist_slot_opened(waitlist_user): send_waitlist_slot_opened(waitlist_user):
-    """Notify a waitlist user that a slot has opened up."""""Notify a waitlist user that a slot has opened up."""
-    send_email(    send_email(
-        f"Good News! A Slot Has Opened Up for {waitlist_user['preferred_date']} at {waitlist_user['preferred_time']}", {waitlist_user['preferred_date']} at {waitlist_user['preferred_time']}",
+def send_waitlist_slot_opened(waitlist_user):
+    """Notify a waitlist user that a slot has opened up."""
+    send_email(
+        f"Good News! A Slot Has Opened Up for {waitlist_user['preferred_date']} at {waitlist_user['preferred_time']}",
         waitlist_user['email'],
-        f"""Hello {waitlist_user['name']},lo {waitlist_user['name']},
+        f"""Hello {waitlist_user['name']},
 
-A slot has just opened up for your requested date and time:our requested date and time:
+A slot has just opened up for your requested date and time:
 Date: {waitlist_user['preferred_date']}
-Time Slot: {waitlist_user['preferred_time']}Time Slot: {waitlist_user['preferred_time']}
+Time Slot: {waitlist_user['preferred_time']}
 
-Please reply to this email or contact us as soon as possible if you would like to claim this slot.s as soon as possible if you would like to claim this slot.
+Please reply to this email or contact us as soon as possible if you would like to claim this slot.
 
-Best regards,Best regards,
+Best regards,
 My Hibachi Chef Team
-""""""
+"""
     )

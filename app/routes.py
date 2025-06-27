@@ -13,6 +13,7 @@ from .email_utils import (
     send_cancellation_email,
     send_email,
     send_waitlist_slot_opened,
+    send_waitlist_position_email,
 )
 from .models import BookingCreate, WaitlistCreate, CancelBookingRequest, WaitlistEntry
 import logging
@@ -430,14 +431,7 @@ def admin_kpis(user=Depends(admin_required)):
             c.execute("SELECT COUNT(*) FROM waitlist")
             waitlist_count = c.fetchone()[0]
 
-
-
-
-
-
-
-
-    }        "waitlist": waitlist_count        "month": len(monthly_bookings),        "week": week_count,        "total": total_bookings,    return {    return {
+    return {
         "total": total_bookings,
         "week": week_count,
         "month": len(monthly_bookings),

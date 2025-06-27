@@ -15,7 +15,7 @@ def patch_send_email(monkeypatch):
     monkeypatch.setattr(email_utils, "send_waitlist_slot_opened", lambda *args, **kwargs: None)
 
 def test_availability():
-    response = client.get("/availability?date=2025-07-01")
+    response = client.get("/api/booking/availability?date=2025-07-01")
     assert response.status_code == 200
     assert isinstance(response.json(), dict)
 
@@ -32,7 +32,7 @@ def test_book_rate_limit():
         "contact_preference": "email"
     }
     for _ in range(5):
-        client.post("/book", json=data)
+        client.post("/api/booking/book", json=data)
     # 6th request should be rate limited
-    response = client.post("/book", json=data)
+    response = client.post("/api/booking/book", json=data)
     assert response.status_code == 429
