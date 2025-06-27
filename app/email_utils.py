@@ -9,6 +9,11 @@ SMTP_PASS = os.environ.get("SMTP_PASS")
 
 def send_email(subject, to, content):
     """Send a plain text email using the configured SMTP server."""
+    # Skip email sending during testing
+    if os.environ.get("TESTING") == "true" or os.environ.get("DISABLE_EMAIL") == "true":
+        print(f"TEST MODE: Would send email to {to} with subject: {subject}")
+        return
+        
     msg = EmailMessage()
     msg['Subject'] = subject
     msg['From'] = SMTP_USER
@@ -39,6 +44,12 @@ Contact Preference: {booking.contact_preference}
     )
 
 def send_customer_confirmation(booking):
+    """Send booking confirmation email to customer."""
+    # Skip email sending during testing
+    if os.environ.get("TESTING") == "true" or os.environ.get("DISABLE_EMAIL") == "true":
+        print(f"TEST MODE: Would send confirmation email to {booking.email}")
+        return
+        
     subject = f"Your Booking Confirmation for {booking.date} at {booking.time_slot}"
     to = booking.email
     plain_text = f"""Thank you for your booking!

@@ -1,15 +1,36 @@
-fastapi
-uvicorn
-pydantic
-passlib[bcrypt]
-python-jose[cryptography]
-python-multipart
+# Core FastAPI dependencies
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+pydantic>=2.11.0
+
+# Authentication & Security
+passlib[bcrypt]>=1.7.4
+python-jose[cryptography]>=3.5.0
+python-multipart>=0.0.20
+
+# Database
 sqlalchemy>=2.0,<3.0
 alembic>=1.11,<2.0
-pymysql
-pytest
-httpx
-slowapi
-python-dotenv
-apscheduler
-email-validator
+pymysql>=1.1.0
+
+# Background tasks & Scheduling
+apscheduler>=3.11.0
+
+# HTTP Client & Testing
+httpx>=0.28.0
+pytest>=8.4.0
+pytest-asyncio>=0.23.0
+
+# Rate limiting
+slowapi>=0.1.9
+
+# Environment & Configuration
+python-dotenv>=1.1.0
+
+# Email validation
+email-validator>=2.2.0
+
+# Development dependencies (optional)
+black>=24.0.0
+flake8>=7.0.0
+mypy>=1.10.0

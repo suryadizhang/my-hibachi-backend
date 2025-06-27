@@ -49,6 +49,76 @@ coverage.xml
 .pytest_cache/
 cover/
 
+# Environment variables
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+*.env
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+mh-bookings.db
+weekly_databases/*.db
+
+# Logs
+*.log
+logs/
+app.log
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+.ENV/
+.env/
+
+# FastAPI specific
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# Backup files
+*.bak
+*.backup
+*.orig
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Security
+secrets/
+private_keys/
+
 # Translations
 *.mo
 *.pot
@@ -191,3 +261,64 @@ htmlcov/
 # Runtime files
 *.pid
 *.sock
+
+# Additional Python files
+*.pyo
+*.pyd
+*.pyc
+__pycache__/
+*.egg-info/
+
+# FastAPI/Uvicorn specific
+access.log
+error.log
+uvicorn.log
+
+# Email credentials and secrets
+*.env
+.env.*
+!.env.example
+csbook.env
+secrets.txt
+credentials.json
+
+# Task scheduling
+celerybeat-schedule
+celerybeat.pid
+
+# Additional database files
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Development tools
+.mypy_cache/
+.pytest_cache/
+.coverage.*
+.cache
+
+# Documentation
+docs/_build/
+site/
+
+# Security
+.secret
+.secrets
+*.pem
+*.key
+*.crt
+
+# Monitoring
+newrelic.ini
+.newrelic.ini
+
+# Docker
+Dockerfile.dev
+docker-compose.override.yml
+.dockerignore
+
+# IDE specific
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+*.code-workspace
