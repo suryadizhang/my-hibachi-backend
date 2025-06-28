@@ -322,3 +322,103 @@ docker-compose.override.yml
 .vscode/launch.json
 .vscode/tasks.json
 *.code-workspace
+
+# FastAPI/Python specific
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Alembic
+alembic/versions/*.py
+!alembic/versions/__init__.py
+
+# Development tools
+.ruff_cache/
+.black
+.isort.cfg
+.flake8
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Profiling
+.prof
+
+# Security
+*.pem
+*.key
+*.crt
+*.csr
+
+# Backup files
+*.bak
+*.backup
+*.orig
+
+# Temporary files
+*.tmp
+*.temp
+~$*
+
+# API keys and secrets
+secrets.json
+config/secrets.py
+
+# Local configuration
+local_settings.py
+settings_local.py
+
+# Documentation builds
+docs/_build/
+docs/build/
+site/
+
+# PyCharm
+.idea/
+*.iml
+*.iws
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Visual Studio Code
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Spyder
+.spyderproject
+.spyproject
+
+# Rope
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# pipenv
+Pipfile.lock
+
+# Poetry
+poetry.lock
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# End of https://www.toptal.com/developers/gitignore/api/python,fastapi
