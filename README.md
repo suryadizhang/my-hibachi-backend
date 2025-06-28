@@ -298,7 +298,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🆘 Support
 
 For support and questions:
-- Email: dev@myhibachi.com
+- Email: cs@myhibachichef.com
 - Issues: [GitHub Issues](https://github.com/your-username/my-hibachi-backend/issues)
 - API Documentation: `http://localhost:8000/docs` (when running locally)
 
