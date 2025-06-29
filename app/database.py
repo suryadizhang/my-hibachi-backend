@@ -89,6 +89,20 @@ def get_db():
             source TEXT
         )
     """)
+    # Ensure activity_logs table exists
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS activity_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            entity_id TEXT,
+            description TEXT NOT NULL,
+            reason TEXT,
+            details TEXT,
+            timestamp TEXT NOT NULL
+        )
+    """)
     conn.commit()
     return conn
 
