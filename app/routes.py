@@ -18,6 +18,8 @@ from .email_utils import (
     send_cancellation_email,
     send_waitlist_slot_opened,
     send_waitlist_position_email,
+    send_deposit_confirmation_email,
+    send_booking_cancellation_email,
 )
 from .models import (
     BookingCreate, WaitlistCreate, CancelBookingRequest, WaitlistEntry
@@ -239,7 +241,19 @@ def cancel_booking(
                     cancelled_booking = dict(booking)
                     logger.info(f"Admin {user['username']} cancelled booking {booking_id} for reason: {reason}")
                     try:
-                        send_cancellation_email(cancelled_booking, reason)
+                        # Create a booking object for the new email function
+                        booking_obj = type("Booking", (), {
+                            "name": cancelled_booking['name'],
+                            "email": cancelled_booking['email'],
+                            "phone": cancelled_booking['phone'],
+                            "date": cancelled_booking['date'],
+                            "time_slot": cancelled_booking['time_slot'],
+                            "address": cancelled_booking['address'],
+                            "city": cancelled_booking['city'],
+                            "zipcode": cancelled_booking['zipcode']
+                        })()
+                        
+                        send_booking_cancellation_email(booking_obj, reason)
                     except Exception as e:
                         logger.error(f"Failed to send cancellation email: {e}")
                     # Notify the first user on the waitlist for this slot
@@ -291,37 +305,24 @@ def confirm_deposit(
                 f"Email: {booking_dict['email']}"
     )
     
-    # Send email notification to suryadizhang.chef@gmail.com
+    # Send email notification to customer and info@myhibachichef.com
     try:
-        # Note: Email credentials will be provided later
-        # For now, we'll prepare the email content
-        email_subject = f"Deposit Confirmed - Booking #{booking_id}"
-        email_content = f"""
-        Deposit has been confirmed for booking:
+        # Create a booking object for the email function
+        booking_obj = type("Booking", (), {
+            "name": booking_dict['name'],
+            "email": booking_dict['email'],
+            "phone": booking_dict['phone'],
+            "date": booking_dict['date'],
+            "time_slot": booking_dict['time_slot'],
+            "address": booking_dict['address'],
+            "city": booking_dict['city'],
+            "zipcode": booking_dict['zipcode']
+        })()
         
-        Booking ID: {booking_id}
-        Customer: {booking_dict['name']}
-        Email: {booking_dict['email']}
-        Phone: {booking_dict['phone']}
-        Date: {booking_dict['date']}
-        Time: {booking_dict['time_slot']}
-        Address: {booking_dict['address']}, {booking_dict['city']}
-        
-        Confirmed by: {user["username"]}
-        Reason: {reason}
-        Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-        """
-        
-        # TODO: Implement actual email sending when credentials are provided
-        # send_deposit_confirmation_email(
-        #     to_email="suryadizhang.chef@gmail.com",
-        #     from_email="cs@myhibachichef.com",
-        #     subject=email_subject,
-        #     content=email_content
-        # )
+        send_deposit_confirmation_email(booking_obj, reason)
         
         logger.info(
-            f"Deposit confirmation email prepared for booking {booking_id}"
+            f"Deposit confirmation emails sent for booking {booking_id}"
         )
         
     except Exception as e:
