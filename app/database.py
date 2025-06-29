@@ -57,9 +57,32 @@ def init_user_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('superadmin', 'admin'))
+            role TEXT NOT NULL CHECK(role IN ('superadmin', 'admin')),
+            full_name TEXT,
+            email TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            last_login TEXT,
+            is_active INTEGER DEFAULT 1,
+            password_reset_required INTEGER DEFAULT 0,
+            created_by TEXT
         )
     """)
+    
+    # Create activity logs for user management
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS user_activity_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            action TEXT NOT NULL,
+            target_user TEXT,
+            details TEXT NOT NULL,
+            timestamp TEXT DEFAULT (datetime('now')),
+            ip_address TEXT,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    """)
+    
     conn.commit()
     return conn
 

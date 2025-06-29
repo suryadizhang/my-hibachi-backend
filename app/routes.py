@@ -82,17 +82,226 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.post("/superadmin/create_admin")
-def create_admin(username: str, password: str, user=Depends(superadmin_required)):
+def create_admin(username: str, password: str, 
+                user=Depends(superadmin_required)):
     """Create a new admin user (superadmin only)."""
     conn = get_user_db()
     c = conn.cursor()
     try:
-        c.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-                  (username, hash_password(password), "admin"))
+        current_time = datetime.now(ZoneInfo("America/Los_Angeles")).isoformat()
+        c.execute("""
+            INSERT INTO users (username, password_hash, role, full_name, 
+                             email, created_at, updated_at, is_active, 
+                             password_reset_required, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            username, hash_password(password), "admin", username.title(),
+            f"{username}@myhibachi.com", current_time, current_time, 1, 0,
+            user["username"]
+        ))
         conn.commit()
+
+        # Log the action
+        c.execute("""
+            INSERT INTO user_activity_logs (user_id, action, target_user, 
+                                          details, timestamp)
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            user["id"], "create_admin", username,
+            f"Created admin account: {username}", current_time
+        ))
+        conn.commit()
+
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=400, detail="Username already exists")
-    return {"message": "Admin created"}
+    return {"message": f"Admin '{username}' created successfully"}
+
+@router.get("/superadmin/admins")
+def list_admins(user=Depends(superadmin_required)):
+    """List all admin users (superadmin only)."""
+    conn = get_user_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT id, username, full_name, email, created_at, updated_at, 
+               last_login, is_active, password_reset_required, created_by
+        FROM users 
+        WHERE role = 'admin' 
+        ORDER BY created_at DESC
+    """)
+    admins = [dict(row) for row in c.fetchall()]
+    return {"admins": admins}
+
+@router.delete("/superadmin/admin/{admin_username}")
+def delete_admin(admin_username: str, user=Depends(superadmin_required)):
+    """Delete an admin user (superadmin only)."""
+    if admin_username == user["username"]:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    
+    conn = get_user_db()
+    c = conn.cursor()
+    
+    # Check if admin exists
+    c.execute("SELECT * FROM users WHERE username = ? AND role = 'admin'", (admin_username,))
+    admin = c.fetchone()
+    if not admin:
+        raise HTTPException(status_code=404, detail="Admin not found")
+    
+    # Delete the admin
+    c.execute("DELETE FROM users WHERE username = ? AND role = 'admin'", (admin_username,))
+    
+    # Log the action
+    current_time = datetime.now(ZoneInfo("America/Los_Angeles")).isoformat()
+    c.execute("""
+        INSERT INTO user_activity_logs (user_id, action, target_user, details, timestamp)
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        user["id"], "delete_admin", admin_username, 
+        f"Deleted admin account: {admin_username}", current_time
+    ))
+    conn.commit()
+    
+    return {"message": f"Admin '{admin_username}' deleted successfully"}
+
+@router.post("/superadmin/admin/{admin_username}/reset_password")
+def reset_admin_password(admin_username: str, new_password: str = None, user=Depends(superadmin_required)):
+    """Reset an admin's password (superadmin only). If no password provided, uses default."""
+    default_passwords = {
+        "karen": "myhibachicustomers!",
+        "yohan": "gedeinbiji"
+    }
+    
+    # Use provided password or default
+    password = new_password if new_password else default_passwords.get(admin_username, "defaultpassword123!")
+    
+    conn = get_user_db()
+    c = conn.cursor()
+    
+    # Check if admin exists
+    c.execute("SELECT * FROM users WHERE username = ? AND role = 'admin'", (admin_username,))
+    admin = c.fetchone()
+    if not admin:
+        raise HTTPException(status_code=404, detail="Admin not found")
+    
+    # Update password
+    current_time = datetime.now(ZoneInfo("America/Los_Angeles")).isoformat()
+    c.execute("""
+        UPDATE users 
+        SET password_hash = ?, updated_at = ?, password_reset_required = 1
+        WHERE username = ? AND role = 'admin'
+    """, (hash_password(password), current_time, admin_username))
+    
+    # Log the action
+    c.execute("""
+        INSERT INTO user_activity_logs (user_id, action, target_user, details, timestamp)
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        user["id"], "reset_password", admin_username, 
+        f"Reset password for admin: {admin_username}", current_time
+    ))
+    conn.commit()
+    
+    return {"message": f"Password reset for admin '{admin_username}'", "new_password": password}
+
+@router.put("/superadmin/admin/{admin_username}")
+def update_admin(admin_username: str, full_name: str = None, email: str = None, 
+                is_active: bool = None, user=Depends(superadmin_required)):
+    """Update admin account details (superadmin only)."""
+    conn = get_user_db()
+    c = conn.cursor()
+    
+    # Check if admin exists
+    c.execute("SELECT * FROM users WHERE username = ? AND role = 'admin'", (admin_username,))
+    admin = c.fetchone()
+    if not admin:
+        raise HTTPException(status_code=404, detail="Admin not found")
+    
+    # Build update query
+    updates = []
+    params = []
+    
+    if full_name is not None:
+        updates.append("full_name = ?")
+        params.append(full_name)
+    
+    if email is not None:
+        updates.append("email = ?")
+        params.append(email)
+    
+    if is_active is not None:
+        updates.append("is_active = ?")
+        params.append(1 if is_active else 0)
+    
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    
+    current_time = datetime.now(ZoneInfo("America/Los_Angeles")).isoformat()
+    updates.append("updated_at = ?")
+    params.append(current_time)
+    params.append(admin_username)
+    
+    query = f"UPDATE users SET {', '.join(updates)} WHERE username = ? AND role = 'admin'"
+    c.execute(query, params)
+    
+    # Log the action
+    details = f"Updated admin {admin_username}: " + ", ".join([
+        f"{field}={value}" for field, value in [
+            ("full_name", full_name), ("email", email), ("is_active", is_active)
+        ] if value is not None
+    ])
+    
+    c.execute("""
+        INSERT INTO user_activity_logs (user_id, action, target_user, details, timestamp)
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        user["id"], "update_admin", admin_username, details, current_time
+    ))
+    conn.commit()
+    
+    return {"message": f"Admin '{admin_username}' updated successfully"}
+
+@router.get("/superadmin/activity_logs")
+def get_admin_activity_logs(limit: int = 100, user=Depends(superadmin_required)):
+    """Get admin activity logs (superadmin only)."""
+    conn = get_user_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT ual.*, u.username as actor_username
+        FROM user_activity_logs ual
+        LEFT JOIN users u ON ual.user_id = u.id
+        ORDER BY ual.timestamp DESC
+        LIMIT ?
+    """, (limit,))
+    logs = [dict(row) for row in c.fetchall()]
+    return {"logs": logs}
+
+@router.post("/admin/change_password")
+def change_own_password(current_password: str, new_password: str, user=Depends(admin_required)):
+    """Allow admin to change their own password."""
+    # Verify current password
+    if not verify_password(current_password, user["password_hash"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    
+    conn = get_user_db()
+    c = conn.cursor()
+    
+    current_time = datetime.now(ZoneInfo("America/Los_Angeles")).isoformat()
+    c.execute("""
+        UPDATE users 
+        SET password_hash = ?, updated_at = ?, password_reset_required = 0
+        WHERE id = ?
+    """, (hash_password(new_password), current_time, user["id"]))
+    
+    # Log the action
+    c.execute("""
+        INSERT INTO user_activity_logs (user_id, action, target_user, details, timestamp)
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        user["id"], "change_password", user["username"], 
+        f"Changed own password", current_time
+    ))
+    conn.commit()
+    
+    return {"message": "Password changed successfully"}
 
 @router.post("/book")
 @limiter.limit("5/minute")
