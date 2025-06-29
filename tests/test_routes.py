@@ -1,6 +1,12 @@
-from fastapi.testclient import TestClient
-from main import app
+import os
 import pytest
+from fastapi.testclient import TestClient
+
+# Set testing environment variables before any imports
+os.environ["TESTING"] = "true"
+os.environ["DISABLE_EMAIL"] = "true"
+
+from main import app
 
 client = TestClient(app)
 

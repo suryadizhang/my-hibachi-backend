@@ -3,6 +3,10 @@ import os
 import glob
 import pytest
 
+# Set testing environment variables before any imports
+os.environ["TESTING"] = "true"
+os.environ["DISABLE_EMAIL"] = "true"
+
 # Clean up the test DB before running tests
 def setup_module(module):
     db_dir = os.path.join(os.path.dirname(__file__), "../weekly_databases")
