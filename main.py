@@ -5,7 +5,6 @@ from slowapi.errors import RateLimitExceeded
 from app.routes import router
 from fastapi.responses import JSONResponse
 from fastapi.requests import Request
-from fastapi.exception_handlers import RequestValidationError
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 import logging
@@ -69,3 +68,8 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 @app.get("/")
 def root():
     return {"message": "My hibachi"}  # Or any message you want
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

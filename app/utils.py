@@ -50,6 +50,31 @@ def upsert_newsletter_entry(data, source):
         ))
         conn.commit()
 
+
+def log_activity(username, action_type, entity_type, entity_id, description, 
+                 reason=None, details=None):
+    """Log an activity to the activity_logs table."""
+    from .database import get_db
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO activity_logs 
+            (username, action_type, entity_type, entity_id, description, 
+             reason, details, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            username,
+            action_type,
+            entity_type,
+            str(entity_id) if entity_id is not None else None,
+            description,
+            reason,
+            details,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ))
+        conn.commit()
+
+
 def notify_all_waitlist_users(date, time_slot, send_func):
     """Notify all users on the waitlist for a given slot."""
     from .database import get_db

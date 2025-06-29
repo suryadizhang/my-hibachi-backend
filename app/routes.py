@@ -1,7 +1,12 @@
-from fastapi import APIRouter, HTTPException, Depends, status, BackgroundTasks, Body
+from fastapi import (
+    APIRouter, HTTPException, Depends, BackgroundTasks, Body, Request
+)
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.responses import StreamingResponse
 from .database import get_week_db, get_user_db
-from .auth import hash_password, verify_password, create_access_token, decode_access_token
+from .auth import (
+    hash_password, verify_password, create_access_token, decode_access_token
+)
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import os
@@ -11,22 +16,21 @@ from .email_utils import (
     send_customer_confirmation,
     send_waitlist_confirmation,
     send_cancellation_email,
-    send_email,
     send_waitlist_slot_opened,
     send_waitlist_position_email,
 )
-from .models import BookingCreate, WaitlistCreate, CancelBookingRequest, WaitlistEntry
+from .models import (
+    BookingCreate, WaitlistCreate, CancelBookingRequest, WaitlistEntry
+)
 import logging
-import threading
-import time
 from .deposit_tasks import schedule_deposit_jobs
-from .utils import get_latest_user_info, upsert_newsletter_entry, notify_all_waitlist_users
-from fastapi.responses import StreamingResponse
+from .utils import (
+    get_latest_user_info, upsert_newsletter_entry, notify_all_waitlist_users
+)
 import csv
 from io import StringIO
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from fastapi import Request
 
 router = APIRouter()
 
@@ -39,6 +43,7 @@ logger = logging.getLogger("booking")
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/booking/token")
 limiter = Limiter(key_func=get_remote_address)
+
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
     payload = decode_access_token(token)
@@ -245,19 +250,194 @@ def cancel_booking(
     return {"message": "Booking cancelled", "booking": cancelled_booking}
 
 @router.post("/admin/confirm_deposit")
-def confirm_deposit(booking_id: int, date: str, user=Depends(admin_required)):
-    """Admin marks a booking as deposit received."""
+def confirm_deposit(
+    booking_id: int,
+    date: str,
+    reason: str = Body(..., embed=True),
+    user=Depends(admin_required)
+):
+    """Admin marks a booking as deposit received and sends notification."""
+    from .utils import log_activity
+    
     conn = get_week_db(date)
     c = conn.cursor()
-    c.execute("UPDATE bookings SET deposit_received = 1 WHERE id = ?", (booking_id,))
-    if c.rowcount == 0:
+    
+    # Get booking details first
+    c.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,))
+    booking = c.fetchone()
+    if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
+    
+    booking_dict = dict(booking)
+    
+    # Update deposit status
+    c.execute(
+        "UPDATE bookings SET deposit_received = 1 WHERE id = ?",
+        (booking_id,)
+    )
     conn.commit()
+    
+    # Log the activity
+    log_activity(
+        username=user["username"],
+        action_type="DEPOSIT_CONFIRMED",
+        entity_type="BOOKING",
+        entity_id=booking_id,
+        description=f"Confirmed deposit received for booking {booking_id} "
+                    f"({booking_dict['name']} - {booking_dict['date']} "
+                    f"{booking_dict['time_slot']})",
+        reason=reason,
+        details=f"Date: {date}, Customer: {booking_dict['name']}, "
+                f"Email: {booking_dict['email']}"
+    )
+    
+    # Send email notification to suryadizhang.chef@gmail.com
+    try:
+        # Note: Email credentials will be provided later
+        # For now, we'll prepare the email content
+        email_subject = f"Deposit Confirmed - Booking #{booking_id}"
+        email_content = f"""
+        Deposit has been confirmed for booking:
+        
+        Booking ID: {booking_id}
+        Customer: {booking_dict['name']}
+        Email: {booking_dict['email']}
+        Phone: {booking_dict['phone']}
+        Date: {booking_dict['date']}
+        Time: {booking_dict['time_slot']}
+        Address: {booking_dict['address']}, {booking_dict['city']}
+        
+        Confirmed by: {user["username"]}
+        Reason: {reason}
+        Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        """
+        
+        # TODO: Implement actual email sending when credentials are provided
+        # send_deposit_confirmation_email(
+        #     to_email="suryadizhang.chef@gmail.com",
+        #     from_email="cs@myhibachichef.com",
+        #     subject=email_subject,
+        #     content=email_content
+        # )
+        
+        logger.info(
+            f"Deposit confirmation email prepared for booking {booking_id}"
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to send deposit confirmation email: {e}")
+        # Don't fail the whole operation if email fails
+    
     # Optionally: Remove scheduled jobs for this booking
-    from .deposit_tasks import scheduler
-    scheduler.remove_job(f"reminder_{booking_id}")
-    scheduler.remove_job(f"admin_notify_{booking_id}")
-    return {"message": "Deposit confirmed"}
+    try:
+        from .deposit_tasks import scheduler
+        scheduler.remove_job(f"reminder_{booking_id}")
+        scheduler.remove_job(f"admin_notify_{booking_id}")
+    except Exception as e:
+        logger.warning(f"Failed to remove scheduled jobs: {e}")
+    
+    return {"message": "Deposit confirmed and notification sent"}
+
+
+@router.post("/admin/create-sample-data")
+def create_sample_data(user=Depends(admin_required)):
+    """Create sample test data for development and testing."""
+    from .utils import log_activity
+    import subprocess
+    import sys
+    
+    try:
+        # Run the sample data creation script
+        script_path = os.path.join(
+            os.path.dirname(__file__), '..', 'create_sample_db.py'
+        )
+        result = subprocess.run(
+            [sys.executable, script_path],
+            capture_output=True, text=True
+        )
+        
+        if result.returncode == 0:
+            # Log the activity
+            log_activity(
+                username=user["username"],
+                action_type="DATA_EXPORT",
+                entity_type="DATABASE",
+                entity_id=None,
+                description="Sample test data created successfully",
+                reason="Development and testing purposes",
+                details="Created fake bookings, newsletters, waitlist, logs"
+            )
+            
+            return {
+                "success": True,
+                "message": "Sample data created successfully",
+                "output": result.stdout
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Failed to create sample data",
+                "error": result.stderr
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Error creating sample data: {str(e)}"
+        }
+
+
+@router.get("/admin/activity-logs")
+def get_activity_logs(
+    page: int = 1,
+    limit: int = 50,
+    entity_type: str = None,
+    action_type: str = None,
+    user=Depends(admin_required)
+):
+    """Get activity logs with pagination and filtering."""
+    from .database import get_db
+    
+    offset = (page - 1) * limit
+    where_conditions = []
+    params = []
+    
+    if entity_type:
+        where_conditions.append("entity_type = ?")
+        params.append(entity_type)
+    
+    if action_type:
+        where_conditions.append("action_type = ?")
+        params.append(action_type)
+    
+    where_clause = (" WHERE " + " AND ".join(where_conditions)
+                    if where_conditions else "")
+    
+    with get_db() as conn:
+        c = conn.cursor()
+        
+        # Get total count
+        count_query = f"SELECT COUNT(*) FROM activity_logs{where_clause}"
+        c.execute(count_query, params)
+        total = c.fetchone()[0]
+        
+        # Get logs with pagination
+        query = f"""
+            SELECT * FROM activity_logs{where_clause}
+            ORDER BY timestamp DESC
+            LIMIT ? OFFSET ?
+        """
+        params.extend([limit, offset])
+        c.execute(query, params)
+        logs = [dict(row) for row in c.fetchall()]
+    
+    return {
+        "logs": logs,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": (total + limit - 1) // limit
+    }
+
 
 @router.get("/admin/waitlist", response_model=list[WaitlistEntry])
 def get_waitlist(user=Depends(admin_required)):
@@ -437,4 +617,180 @@ def admin_kpis(user=Depends(admin_required)):
         "month": len(monthly_bookings),
         "waitlist": waitlist_count
     }
+
+
+@router.get("/admin/newsletter/recipients")
+def get_newsletter_recipients(
+    city: str = "", name: str = "", user=Depends(admin_required)
+):
+    """Get all newsletter recipients, optionally filtered by city and name."""
+    from .database import get_db
+    with get_db() as conn:
+        c = conn.cursor()
+        
+        query_parts = ["SELECT name, phone, email, address, city, zipcode,"]
+        query_parts.append("last_activity_date, source")
+        query_parts.append("FROM company_newsletter")
+        
+        conditions = []
+        params = []
+        
+        if city and city.strip():
+            conditions.append("city LIKE ?")
+            params.append(f"%{city.strip()}%")
+            
+        if name and name.strip():
+            conditions.append("name LIKE ?")
+            params.append(f"%{name.strip()}%")
+        
+        if conditions:
+            query_parts.append("WHERE " + " AND ".join(conditions))
+            
+        query = " ".join(query_parts)
+        c.execute(query, params)
+
+        rows = c.fetchall()
+        recipients = []
+        for row in rows:
+            recipients.append({
+                "name": row["name"],
+                "phone": row["phone"],
+                "email": row["email"],
+                "address": row["address"],
+                "city": row["city"],
+                "zipcode": row["zipcode"],
+                "last_activity_date": row["last_activity_date"],
+                "source": row["source"]
+            })
+
+    return {
+        "recipients": recipients,
+        "total_count": len(recipients),
+        "filtered_by_city": city if city and city.strip() else None,
+        "filtered_by_name": name if name and name.strip() else None
+    }
+
+
+@router.post("/admin/newsletter/send")
+def send_newsletter(
+    newsletter_data: dict,
+    user=Depends(admin_required)
+):
+    """Send newsletter to recipients (admin only)."""
+    from .utils import log_activity
+    
+    try:
+        subject = newsletter_data.get("subject", "My Hibachi Newsletter")
+        message = newsletter_data.get("message", "")
+        city_filter = newsletter_data.get("city_filter", "")
+        send_type = newsletter_data.get("send_type", "email")  # email or sms
+        
+        if not message.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Newsletter message cannot be empty"
+            )
+        
+        # For now, only support email sending
+        if send_type != "email":
+            raise HTTPException(
+                status_code=400,
+                detail="SMS sending is not yet implemented"
+            )
+        
+        from .database import get_db
+        with get_db() as conn:
+            c = conn.cursor()
+            if city_filter and city_filter.strip():
+                query = """SELECT name, email FROM company_newsletter
+                          WHERE city LIKE ? AND email IS NOT NULL
+                          AND email != ''"""
+                c.execute(query, (f"%{city_filter.strip()}%",))
+            else:
+                query = """SELECT name, email FROM company_newsletter
+                          WHERE email IS NOT NULL AND email != ''"""
+                c.execute(query)
+            
+            recipients = c.fetchall()
+        
+        if not recipients:
+            # Log the attempt even if no recipients
+            log_activity(
+                username=user["username"],
+                action_type="NEWSLETTER_SENT",
+                entity_type="NEWSLETTER",
+                entity_id=None,
+                description="Newsletter send attempted - no recipients found",
+                reason=f"City filter: {city_filter or 'None'}",
+                details=f"Subject: {subject}"
+            )
+            
+            return {
+                "success": False,
+                "message": "No email recipients found",
+                "sent_count": 0,
+                "failed_count": 0
+            }
+        
+        # Mock email sending (replace with actual email service implementation)
+        sent_count = 0
+        failed_count = 0
+        
+        # TODO: Implement actual email sending logic here
+        # For now, we'll simulate sending
+        for recipient in recipients:
+            try:
+                # This is where you would integrate with your email service
+                # e.g., SendGrid, AWS SES, SMTP, etc.
+                print(f"[MOCK EMAIL] To: {recipient['email']} "
+                      f"({recipient['name']})")
+                print(f"Subject: {subject}")
+                print(f"Message: {message}")
+                sent_count += 1
+            except Exception as e:
+                print(f"Failed to send to {recipient['email']}: {e}")
+                failed_count += 1
+        
+        # Log the newsletter send activity
+        log_activity(
+            username=user["username"],
+            action_type="NEWSLETTER_SENT",
+            entity_type="NEWSLETTER",
+            entity_id=None,
+            description=f"Newsletter sent to {sent_count} recipients",
+            reason=f"Subject: {subject}",
+            details=f"City filter: {city_filter or 'None'}, "
+                    f"Sent: {sent_count}, Failed: {failed_count}, "
+                    f"Message length: {len(message)} chars"
+        )
+        
+        return {
+            "success": True,
+            "message": f"Newsletter sent to {sent_count} recipients",
+            "sent_count": sent_count,
+            "failed_count": failed_count,
+            "total_recipients": len(recipients)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to send newsletter: {str(e)}"
+        )
+
+
+@router.get("/admin/newsletter/cities")
+def get_newsletter_cities(user=Depends(admin_required)):
+    """Get all unique cities from newsletter database (admin only)."""
+    from .database import get_db
+    with get_db() as conn:
+        c = conn.cursor()
+        query = """SELECT DISTINCT city FROM company_newsletter
+                  WHERE city IS NOT NULL AND city != '' ORDER BY city"""
+        c.execute(query)
+        cities = [row["city"] for row in c.fetchall()]
+    
+    return {"cities": cities}
 

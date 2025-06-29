@@ -156,10 +156,34 @@ def init_db():
                 source TEXT
             )
         ''')
+        # Activity Logs
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS activity_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                action_type TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT,
+                description TEXT NOT NULL,
+                reason TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                details TEXT
+            )
+        ''')
         # After your table creation, ensure the column exists:
-        c.execute("ALTER TABLE bookings ADD COLUMN deposit_received INTEGER DEFAULT 0")
-        c.execute("SELECT * FROM waitlist ORDER BY preferred_date, preferred_time, created_at")
+        try:
+            c.execute(
+                "ALTER TABLE bookings ADD COLUMN deposit_received "
+                "INTEGER DEFAULT 0"
+            )
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        c.execute(
+            "SELECT * FROM waitlist ORDER BY preferred_date, preferred_time, "
+            "created_at"
+        )
         conn.commit()
+
 
 # Ensure the company_newsletter table exists in the main database at startup
 conn = sqlite3.connect("mh-bookings.db")
