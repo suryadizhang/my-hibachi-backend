@@ -51,13 +51,47 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
     payload = decode_access_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
+    
+    username = payload["sub"]
+    
+    # First check users table
     conn = get_user_db()
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE username = ?", (payload["sub"],))
+    c.execute("SELECT * FROM users WHERE username = ?", (username,))
     user = c.fetchone()
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-    return user
+    if user:
+        return user
+    
+    # Then check admins table in main database
+    with sqlite3.connect("mh-bookings.db") as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM admins WHERE username = ?", (username,))
+        admin = cursor.fetchone()
+        if admin:
+            # Convert admin to user-like format for compatibility
+            return {
+                "id": admin["id"],
+                "username": admin["username"],
+                "role": admin["user_type"],
+                "password_hash": admin["password_hash"]
+            }
+    
+    # Check admins table in users database
+    conn = get_user_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM admins WHERE username = ?", (username,))
+    admin = c.fetchone()
+    if admin:
+        # Convert admin to user-like format for compatibility
+        return {
+            "id": admin["id"],
+            "username": admin["username"],
+            "role": admin["user_type"],
+            "password_hash": admin["password_hash"]
+        }
+    
+    raise HTTPException(status_code=401, detail="User not found")
 
 def superadmin_required(user=Depends(get_current_user)):
     if user["role"] != "superadmin":
@@ -80,6 +114,55 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
         raise HTTPException(status_code=401, detail="Incorrect username or password")
     access_token = create_access_token(data={"sub": user["username"], "role": user["role"]})
     return {"access_token": access_token, "token_type": "bearer"}
+
+@router.post("/admin/login")
+def admin_login(credentials: dict):
+    """Authenticate admin user and return a JWT access token."""
+    username = credentials.get("username")
+    password = credentials.get("password")
+    
+    if not username or not password:
+        raise HTTPException(
+            status_code=400,
+            detail="Username and password required"
+        )
+    
+    # Check in main database (mh-bookings.db)
+    with sqlite3.connect("mh-bookings.db") as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM admins WHERE username = ?", (username,))
+        admin = cursor.fetchone()
+        
+        if admin and verify_password(password, admin["password_hash"]):
+            access_token = create_access_token(
+                data={"sub": admin["username"], "role": admin["user_type"]}
+            )
+            return {
+                "access_token": access_token,
+                "token_type": "bearer",
+                "user_type": admin["user_type"]
+            }
+    
+    # Check in users database if not found in main
+    conn = get_user_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM admins WHERE username = ?", (username,))
+    admin = cursor.fetchone()
+    
+    if admin and verify_password(password, admin["password_hash"]):
+        access_token = create_access_token(
+            data={"sub": admin["username"], "role": admin["user_type"]}
+        )
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user_type": admin["user_type"]
+        }
+    
+    raise HTTPException(status_code=401, detail="Invalid admin credentials")
+
+
 
 @router.post("/superadmin/create_admin")
 def create_admin(
