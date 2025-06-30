@@ -82,8 +82,11 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.post("/superadmin/create_admin")
-def create_admin(username: str, password: str, 
-                user=Depends(superadmin_required)):
+def create_admin(
+    username: str = Form(...), 
+    password: str = Form(...),
+    user=Depends(superadmin_required)
+):
     """Create a new admin user (superadmin only)."""
     conn = get_user_db()
     c = conn.cursor()

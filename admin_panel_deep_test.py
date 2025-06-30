@@ -28,7 +28,7 @@ class AdminPanelTester:
         # Try to login with default admin credentials
         login_data = {
             "username": "admin",
-            "password": "admin123"  # Default admin password
+            "password": "CHANGE_ME_IN_PRODUCTION"  # Change this password
         }
         
         try:

@@ -421,4 +421,38 @@ celerybeat.pid
 # mkdocs documentation
 /site
 
+# Files with potential sensitive data (except secure setup)
+setup_admin_accounts.py
+setup_secure_admin.py
+setup_secure_superadmin.py
+setup_new_superadmin.py
+setup_production_accounts.py
+create_manual_superadmin.py
+create_new_superadmin.py
+clean_setup_superadmin.py
+final_superadmin_setup.py
+reset_admin_accounts.py
+delete_all_admins.py
+test_admin_creation.py
+admin_panel_deep_test.py
+test_newsletter_auth.py
+check_db.py
+
+# Allow secure admin setup script
+!secure_admin_setup.py
+
+# Documentation files with credentials
+ADMIN_ACCOUNT_SETUP.md
+PRODUCTION_READY_SUMMARY.md
+
+# Test files with hardcoded credentials
+test_*.py
+*_test.py
+
+# Admin and user management scripts (except secure ones)
+*admin*.py
+*superadmin*.py
+*user*.py
+!secure_admin_setup.py
+
 # End of https://www.toptal.com/developers/gitignore/api/python,fastapi
