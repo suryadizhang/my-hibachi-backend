@@ -1,5 +1,5 @@
 from fastapi import (
-    APIRouter, HTTPException, Depends, BackgroundTasks, Body, Request
+    APIRouter, HTTPException, Depends, BackgroundTasks, Body, Request, Form
 )
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.responses import StreamingResponse
@@ -275,43 +275,53 @@ def get_admin_activity_logs(limit: int = 100, user=Depends(superadmin_required))
     return {"logs": logs}
 
 @router.post("/admin/change_password")
-def change_own_password(current_password: str, new_password: str, user=Depends(admin_required)):
+def change_own_password(
+    current_password: str = Form(...),
+    new_password: str = Form(...),
+    user=Depends(admin_required)
+):
     """Allow admin to change their own password."""
     # Verify current password
     if not verify_password(current_password, user["password_hash"]):
-        raise HTTPException(status_code=400, detail="Current password is incorrect")
-    
+        raise HTTPException(
+            status_code=400, 
+            detail="Current password is incorrect"
+        )
+
     conn = get_user_db()
     c = conn.cursor()
-    
+
     current_time = datetime.now(ZoneInfo("America/Los_Angeles")).isoformat()
     c.execute("""
-        UPDATE users 
+        UPDATE users
         SET password_hash = ?, updated_at = ?, password_reset_required = 0
         WHERE id = ?
     """, (hash_password(new_password), current_time, user["id"]))
-    
+
     # Log the action
     c.execute("""
-        INSERT INTO user_activity_logs (user_id, action, target_user, details, timestamp)
+        INSERT INTO user_activity_logs 
+        (user_id, action, target_user, details, timestamp)
         VALUES (?, ?, ?, ?, ?)
     """, (
-        user["id"], "change_password", user["username"], 
-        f"Changed own password", current_time
+        user["id"], "change_password", user["username"],
+        "Changed own password", current_time
     ))
     conn.commit()
-    
+
     return {"message": "Password changed successfully"}
 
 @router.post("/book")
 @limiter.limit("5/minute")
 def book_service(data: BookingCreate, background_tasks: BackgroundTasks, request: Request):
     """Create a new booking and send confirmation emails."""
+    logger.info(f"Received booking request: {data.model_dump()}")
+    
     conn = get_week_db(data.date)
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM bookings WHERE date = ? AND time_slot = ?", (data.date, data.time_slot))
     count = c.fetchone()[0]
-    print(f"DEBUG: Booking count for {data.date} {data.time_slot}: {count}")  # <-- Add this line
+    logger.info(f"Booking count for {data.date} {data.time_slot}: {count}")
     if count >= 2:
         raise HTTPException(status_code=400, detail="This slot is fully booked.")
     c.execute("""
@@ -778,55 +788,70 @@ def admin_kpis(user=Depends(admin_required)):
     """
     Returns KPIs: total bookings, bookings this week, bookings this month, waitlist count.
     """
-    # Calculate current week and month
-    today = datetime.now()
-    year, week, _ = today.isocalendar()
-    first_of_month = today.replace(day=1)
-    # Weekly DB path
-    db_path = os.path.join("backend/weekly_databases", f"bookings_{year}-{week:02d}.db")
-    # Monthly bookings
-    monthly_bookings = []
-    # Total bookings (all weekly DBs)
-    total_bookings = 0
+    try:
+        # Calculate current week and month
+        today = datetime.now()
+        year, week, _ = today.isocalendar()
+        first_of_month = today.replace(day=1)
+        # Weekly DB path
+        db_path = os.path.join("weekly_databases", f"bookings_{year}-{week:02d}.db")
+        # Monthly bookings
+        monthly_bookings = []
+        # Total bookings (all weekly DBs)
+        total_bookings = 0
 
-    # Count bookings for this week
-    week_count = 0
-    if os.path.exists(db_path):
-        with sqlite3.connect(db_path) as conn:
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM bookings")
-            week_count = c.fetchone()[0]
-
-    # Count bookings for this month (across all weekly DBs)
-    for fname in os.listdir("backend/weekly_databases"):
-        if fname.endswith(".db"):
-            with sqlite3.connect(os.path.join("backend/weekly_databases", fname)) as conn:
+        # Count bookings for this week
+        week_count = 0
+        if os.path.exists(db_path):
+            with sqlite3.connect(db_path) as conn:
                 c = conn.cursor()
-                c.execute("SELECT date FROM bookings")
-                for (date_str,) in c.fetchall():
-                    try:
-                        d = datetime.strptime(date_str, "%Y-%m-%d")
-                        if d >= first_of_month and d.month == today.month and d.year == today.year:
-                            monthly_bookings.append(date_str)
-                        total_bookings += 1
-                    except Exception:
-                        continue
+                c.execute("SELECT COUNT(*) FROM bookings")
+                week_count = c.fetchone()[0]
 
-    # Waitlist count
-    waitlist_count = 0
-    waitlist_db = os.path.join("backend", "mh-bookings.db")
-    if os.path.exists(waitlist_db):
-        with sqlite3.connect(waitlist_db) as conn:
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM waitlist")
-            waitlist_count = c.fetchone()[0]
+        # Count bookings for this month (across all weekly DBs)
+        try:
+            for fname in os.listdir("weekly_databases"):
+                if fname.endswith(".db") and "bookings_" in fname:
+                    full_path = os.path.join("weekly_databases", fname)
+                    with sqlite3.connect(full_path) as conn:
+                        c = conn.cursor()
+                        # Check if bookings table exists
+                        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bookings'")
+                        if c.fetchone():
+                            c.execute("SELECT date FROM bookings")
+                            for (date_str,) in c.fetchall():
+                                try:
+                                    d = datetime.strptime(date_str, "%Y-%m-%d")
+                                    if d >= first_of_month and d.month == today.month and d.year == today.year:
+                                        monthly_bookings.append(date_str)
+                                    total_bookings += 1
+                                except Exception:
+                                    continue
+        except Exception as e:
+            # Log the error but continue
+            print(f"Error reading weekly databases: {e}")
 
-    return {
-        "total": total_bookings,
-        "week": week_count,
-        "month": len(monthly_bookings),
-        "waitlist": waitlist_count
-    }
+        # Waitlist count
+        waitlist_count = 0
+        waitlist_db = "mh-bookings.db"
+        if os.path.exists(waitlist_db):
+            with sqlite3.connect(waitlist_db) as conn:
+                c = conn.cursor()
+                # Check if waitlist table exists
+                c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='waitlist'")
+                if c.fetchone():
+                    c.execute("SELECT COUNT(*) FROM waitlist")
+                    waitlist_count = c.fetchone()[0]
+
+        return {
+            "total": total_bookings,
+            "week": week_count,
+            "month": len(monthly_bookings),
+            "waitlist": waitlist_count
+        }
+    except Exception as e:
+        print(f"Error in admin_kpis: {e}")
+        raise HTTPException(status_code=500, detail=f"KPI calculation error: {str(e)}")
 
 
 @router.get("/admin/newsletter/recipients")

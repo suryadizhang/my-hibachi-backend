@@ -1,15 +1,18 @@
 from pydantic import BaseModel, EmailStr
+from enum import Enum
 
-# Import SQLAlchemy models
-from .models_sqlalchemy import (
-    Base, Booking, User, Waitlist, UserRole, BookingStatus
-)
 
-# Re-export for backward compatibility
-__all__ = [
-    'Base', 'Booking', 'User', 'Waitlist', 'UserRole', 'BookingStatus',
-    'BookingCreate', 'WaitlistCreate', 'CancelBookingRequest', 'WaitlistEntry'
-]
+class UserRole(str, Enum):
+    CUSTOMER = "customer"
+    ADMIN = "admin"
+    SUPERADMIN = "superadmin"
+
+
+class BookingStatus(str, Enum):
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    CANCELLED = "cancelled"
+    COMPLETED = "completed"
 
 
 class BookingCreate(BaseModel):

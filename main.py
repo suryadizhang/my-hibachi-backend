@@ -60,6 +60,8 @@ async def not_found_handler(request: Request, exc):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.error(f"Validation error for {request.method} {request.url}: {exc.errors()}")
+    logger.error(f"Request body: {exc.body}")
     return JSONResponse(
         status_code=422,
         content={"detail": exc.errors(), "body": exc.body},
