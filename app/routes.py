@@ -127,7 +127,26 @@ def admin_login(credentials: dict):
             detail="Username and password required"
         )
     
-    # Check in main database (mh-bookings.db)
+    # First check users table (where superadmin creates new admins)
+    conn = get_user_db()
+    c = conn.cursor()
+    c.execute(
+        "SELECT * FROM users WHERE username = ? AND is_active = 1 AND role IN ('admin', 'superadmin')",
+        (username,)
+    )
+    user = c.fetchone()
+    
+    if user and verify_password(password, user["password_hash"]):
+        access_token = create_access_token(
+            data={"sub": user["username"], "role": user["role"]}
+        )
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user_type": user["role"]
+        }
+    
+    # Then check in main database (mh-bookings.db) for legacy admins
     with sqlite3.connect("mh-bookings.db") as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
