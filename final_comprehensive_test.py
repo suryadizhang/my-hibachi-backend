@@ -26,8 +26,8 @@ class ComprehensiveAdminTest:
         self.print_test("Admin Login")
         
         login_data = {
-            "username": "admin",
-            "password": "admin123"
+            "username": "ady",
+            "password": "13Agustus!"
         }
         
         try:
