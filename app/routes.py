@@ -131,7 +131,10 @@ def admin_login(credentials: dict):
     with sqlite3.connect("mh-bookings.db") as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM admins WHERE username = ?", (username,))
+        cursor.execute(
+            "SELECT * FROM admins WHERE username = ? AND is_active = 1",
+            (username,)
+        )
         admin = cursor.fetchone()
         
         if admin and verify_password(password, admin["password_hash"]):
@@ -143,22 +146,6 @@ def admin_login(credentials: dict):
                 "token_type": "bearer",
                 "user_type": admin["user_type"]
             }
-    
-    # Check in users database if not found in main
-    conn = get_user_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM admins WHERE username = ?", (username,))
-    admin = cursor.fetchone()
-    
-    if admin and verify_password(password, admin["password_hash"]):
-        access_token = create_access_token(
-            data={"sub": admin["username"], "role": admin["user_type"]}
-        )
-        return {
-            "access_token": access_token,
-            "token_type": "bearer",
-            "user_type": admin["user_type"]
-        }
     
     raise HTTPException(status_code=401, detail="Invalid admin credentials")
 
@@ -753,7 +740,12 @@ def get_waitlist(user=Depends(admin_required)):
     from .database import get_db
     with get_db() as conn:
         c = conn.cursor()
-        c.execute("SELECT * FROM waitlist ORDER BY preferred_date, preferred_time, created_at")
+        c.execute("""
+            SELECT id, name, phone, email, preferred_date, preferred_time, 
+                   COALESCE(created_at, datetime('now')) as created_at 
+            FROM waitlist 
+            ORDER BY preferred_date, preferred_time, created_at
+        """)
         waitlist = [dict(row) for row in c.fetchall()]
     return waitlist
 
@@ -878,11 +870,10 @@ def admin_kpis(user=Depends(admin_required)):
         # Calculate current week and month
         today = datetime.now()
         year, week, _ = today.isocalendar()
-        first_of_month = today.replace(day=1)
-        # Weekly DB path
-        db_path = os.path.join("weekly_databases", f"bookings_{year}-{week:02d}.db")
-        # Monthly bookings
-        monthly_bookings = []
+        
+        # Weekly DB path - use same path as monthly endpoint
+        db_path = os.path.join("backend/weekly_databases", f"bookings_{year}-{week:02d}.db")
+        
         # Total bookings (all weekly DBs)
         total_bookings = 0
 
@@ -894,25 +885,46 @@ def admin_kpis(user=Depends(admin_required)):
                 c.execute("SELECT COUNT(*) FROM bookings")
                 week_count = c.fetchone()[0]
 
-        # Count bookings for this month (across all weekly DBs)
+        # Count bookings for this month using the same logic as monthly endpoint
+        from calendar import monthrange
+        from datetime import date as dt_date
+        
+        first_day = dt_date(today.year, today.month, 1)
+        last_day = dt_date(today.year, today.month, monthrange(today.year, today.month)[1])
+        
+        # Find all weeks that overlap with this month
+        week_files = set()
+        day = first_day
+        while day <= last_day:
+            y, w, _ = day.isocalendar()
+            week_files.add((y, w))
+            day += timedelta(days=1)
+        
+        monthly_bookings = []
+        for y, w in week_files:
+            db_file_path = os.path.join("backend/weekly_databases", f"bookings_{y}-{w:02d}.db")
+            if os.path.exists(db_file_path):
+                with sqlite3.connect(db_file_path) as conn:
+                    conn.row_factory = sqlite3.Row
+                    c = conn.cursor()
+                    c.execute("SELECT * FROM bookings WHERE date BETWEEN ? AND ? ORDER BY date, time_slot, created_at",
+                              (first_day.strftime("%Y-%m-%d"), last_day.strftime("%Y-%m-%d")))
+                    monthly_bookings.extend([dict(row) for row in c.fetchall()])
+
+        # Count total bookings (all weekly DBs)
         try:
-            for fname in os.listdir("weekly_databases"):
-                if fname.endswith(".db") and "bookings_" in fname:
-                    full_path = os.path.join("weekly_databases", fname)
-                    with sqlite3.connect(full_path) as conn:
-                        c = conn.cursor()
-                        # Check if bookings table exists
-                        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bookings'")
-                        if c.fetchone():
-                            c.execute("SELECT date FROM bookings")
-                            for (date_str,) in c.fetchall():
-                                try:
-                                    d = datetime.strptime(date_str, "%Y-%m-%d")
-                                    if d >= first_of_month and d.month == today.month and d.year == today.year:
-                                        monthly_bookings.append(date_str)
-                                    total_bookings += 1
-                                except Exception:
-                                    continue
+            weekly_db_dir = "backend/weekly_databases"
+            if os.path.exists(weekly_db_dir):
+                for fname in os.listdir(weekly_db_dir):
+                    if fname.endswith(".db") and "bookings_" in fname:
+                        full_path = os.path.join(weekly_db_dir, fname)
+                        with sqlite3.connect(full_path) as conn:
+                            c = conn.cursor()
+                            # Check if bookings table exists
+                            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bookings'")
+                            if c.fetchone():
+                                c.execute("SELECT COUNT(*) FROM bookings")
+                                total_bookings += c.fetchone()[0]
         except Exception as e:
             # Log the error but continue
             print(f"Error reading weekly databases: {e}")
@@ -1114,4 +1126,29 @@ def get_newsletter_cities(user=Depends(admin_required)):
         cities = [row["city"] for row in c.fetchall()]
     
     return {"cities": cities}
+
+@router.get("/admin/all-bookings")
+def admin_all_bookings(user=Depends(admin_required)):
+    """Get all bookings from all time periods (admin only)."""
+    bookings = []
+    weekly_db_dir = "backend/weekly_databases"
+    
+    if os.path.exists(weekly_db_dir):
+        for fname in os.listdir(weekly_db_dir):
+            if fname.endswith('.db') and 'bookings_' in fname:
+                db_path = os.path.join(weekly_db_dir, fname)
+                try:
+                    with sqlite3.connect(db_path) as conn:
+                        conn.row_factory = sqlite3.Row
+                        c = conn.cursor()
+                        # Check if bookings table exists
+                        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bookings'")
+                        if c.fetchone():
+                            c.execute("SELECT * FROM bookings ORDER BY date, time_slot, created_at")
+                            bookings.extend([dict(row) for row in c.fetchall()])
+                except Exception as e:
+                    print(f"Error reading {db_path}: {e}")
+                    continue
+    
+    return bookings
 
