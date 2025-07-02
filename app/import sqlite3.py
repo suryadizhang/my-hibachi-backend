@@ -31,7 +31,8 @@ def test_get_db_returns_new_connection_each_time():
     conn2 = get_db()
     assert conn1 is not conn2
     conn1.close()
-    conn2.close()import sqlite3
+    conn2.close()
+import sqlite3
 import pytest
 from .database import get_db
 

@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from typing import List
 import os
 import sqlite3
+import csv
 from .email_utils import (
     send_booking_email,
     send_customer_confirmation,
@@ -30,7 +31,6 @@ from .utils import (
     get_latest_user_info, upsert_newsletter_entry, notify_all_waitlist_users
 )
 from .websocket_manager import websocket_manager
-import csv
 from io import StringIO
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -94,15 +94,29 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
     
     raise HTTPException(status_code=401, detail="User not found")
 
+
+@router.get("/me")
+async def get_current_user_info(current_user=Depends(get_current_user)):
+    """Get current user information"""
+    return {
+        "id": current_user.get("id"),
+        "username": current_user.get("username"),
+        "role": current_user.get("role", "admin"),
+        "user_type": current_user.get("role", "admin")
+    }
+
+
 def superadmin_required(user=Depends(get_current_user)):
     if user["role"] != "superadmin":
         raise HTTPException(status_code=403, detail="Superadmin privileges required")
     return user
 
+
 def admin_required(user=Depends(get_current_user)):
     if user["role"] not in ("admin", "superadmin"):
         raise HTTPException(status_code=403, detail="Admin privileges required")
     return user
+
 
 @router.post("/token")
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -115,6 +129,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
         raise HTTPException(status_code=401, detail="Incorrect username or password")
     access_token = create_access_token(data={"sub": user["username"], "role": user["role"]})
     return {"access_token": access_token, "token_type": "bearer"}
+
 
 @router.post("/admin/login")
 def admin_login(credentials: dict):
@@ -132,7 +147,8 @@ def admin_login(credentials: dict):
     conn = get_user_db()
     c = conn.cursor()
     c.execute(
-        "SELECT * FROM users WHERE username = ? AND is_active = 1 AND role IN ('admin', 'superadmin')",
+        "SELECT * FROM users WHERE username = ? AND is_active = 1 "
+        "AND role IN ('admin', 'superadmin')",
         (username,)
     )
     user = c.fetchone()
@@ -170,10 +186,9 @@ def admin_login(credentials: dict):
     raise HTTPException(status_code=401, detail="Invalid admin credentials")
 
 
-
 @router.post("/superadmin/create_admin")
 def create_admin(
-    username: str = Form(...), 
+    username: str = Form(...),
     password: str = Form(...),
     user=Depends(superadmin_required)
 ):
@@ -181,10 +196,12 @@ def create_admin(
     conn = get_user_db()
     c = conn.cursor()
     try:
-        current_time = datetime.now(ZoneInfo("America/Los_Angeles")).isoformat()
+        current_time = datetime.now(
+            ZoneInfo("America/Los_Angeles")
+        ).isoformat()
         c.execute("""
-            INSERT INTO users (username, password_hash, role, full_name, 
-                             email, created_at, updated_at, is_active, 
+            INSERT INTO users (username, password_hash, role, full_name,
+                             email, created_at, updated_at, is_active,
                              password_reset_required, created_by)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
@@ -196,8 +213,8 @@ def create_admin(
 
         # Log the action
         c.execute("""
-            INSERT INTO user_activity_logs (user_id, action, target_user, 
-                                          details, timestamp)
+            INSERT INTO user_activity_logs (user_id, action, target_user,
+                                   details, timestamp)
             VALUES (?, ?, ?, ?, ?)
         """, (
             user["id"], "create_admin", username,
@@ -209,16 +226,17 @@ def create_admin(
         raise HTTPException(status_code=400, detail="Username already exists")
     return {"message": f"Admin '{username}' created successfully"}
 
+
 @router.get("/superadmin/admins")
 def list_admins(user=Depends(superadmin_required)):
     """List all admin users (superadmin only)."""
     conn = get_user_db()
     c = conn.cursor()
     c.execute("""
-        SELECT id, username, full_name, email, created_at, updated_at, 
+        SELECT id, username, full_name, email, created_at, updated_at,
                last_login, is_active, password_reset_required, created_by
-        FROM users 
-        WHERE role = 'admin' 
+        FROM users
+        WHERE role = 'admin'
         ORDER BY created_at DESC
     """)
     admins = [dict(row) for row in c.fetchall()]
@@ -1153,6 +1171,9 @@ def send_newsletter(
     from .utils import log_activity
     
     try:
+        sent_count = 0
+        failed_count = 0
+        
         subject = newsletter_data.get("subject", "My Hibachi Newsletter")
         message = newsletter_data.get("message", "")
         city_filter = newsletter_data.get("city_filter", "")
@@ -1189,8 +1210,11 @@ def send_newsletter(
         if not recipients:
             # Log the attempt even if no recipients
             log_activity(
-                    f"Message length: {len(message)} chars"
-        )
+                user["username"],
+                "newsletter_send_attempt",
+                f"No recipients found. City filter: {city_filter or 'None'}. " +
+                f"Message length: {len(message)} chars"
+            )
         
         return {
             "success": True,
@@ -1247,6 +1271,284 @@ def admin_all_bookings(user=Depends(admin_required)):
     
     return bookings
 
+
+# Customer Management Endpoints
+@router.get("/admin/customers")
+def get_all_customers(user=Depends(admin_required)):
+    """Get all customer data with booking history (admin only)."""
+    customers_data = {}
+    weekly_db_dir = "backend/weekly_databases"
+    
+    if os.path.exists(weekly_db_dir):
+        for fname in os.listdir(weekly_db_dir):
+            if fname.endswith('.db') and 'bookings_' in fname:
+                db_path = os.path.join(weekly_db_dir, fname)
+                try:
+                    with sqlite3.connect(db_path) as conn:
+                        conn.row_factory = sqlite3.Row
+                        c = conn.cursor()
+                        # Check if bookings table exists
+                        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bookings'")
+                        if c.fetchone():
+                            c.execute("""
+                                SELECT name, email, phone, address, city, zipcode, 
+                                       contact_preference, date, time_slot, 
+                                       deposit_received, created_at
+                                FROM bookings 
+                                ORDER BY created_at DESC
+                            """)
+                            bookings = [dict(row) for row in c.fetchall()]
+                            
+                            # Group bookings by customer (using email as unique identifier)
+                            for booking in bookings:
+                                email = booking['email']
+                                if email not in customers_data:
+                                    customers_data[email] = {
+                                        'customer_info': {
+                                            'name': booking['name'],
+                                            'email': booking['email'],
+                                            'phone': booking['phone'],
+                                            'address': booking['address'],
+                                            'city': booking['city'],
+                                            'zipcode': booking['zipcode'],
+                                            'contact_preference': booking['contact_preference']
+                                        },
+                                        'booking_history': [],
+                                        'total_bookings': 0,
+                                        'total_spent': 0.0,
+                                        'last_booking_date': None,
+                                        'first_booking_date': None,
+                                        'favorite_time_slots': [],
+                                        'booking_status_counts': {
+                                            'confirmed': 0,
+                                            'pending': 0,
+                                            'cancelled': 0
+                                        }
+                                    }
+                                
+                                # Add booking to history
+                                customers_data[email]['booking_history'].append({
+                                    'date': booking['date'],
+                                    'time_slot': booking['time_slot'],
+                                    'status': 'confirmed',  # Default status since column doesn't exist
+                                    'deposit_received': bool(booking['deposit_received']),
+                                    'created_at': booking['created_at']
+                                })
+                                
+                                # Update customer statistics
+                                customers_data[email]['total_bookings'] += 1
+                                customers_data[email]['total_spent'] += 55.0  # Base price
+                                
+                                # Update booking dates
+                                booking_date = booking['date']
+                                if not customers_data[email]['last_booking_date'] or booking_date > customers_data[email]['last_booking_date']:
+                                    customers_data[email]['last_booking_date'] = booking_date
+                                if not customers_data[email]['first_booking_date'] or booking_date < customers_data[email]['first_booking_date']:
+                                    customers_data[email]['first_booking_date'] = booking_date
+                                
+                                # Count booking statuses - use confirmed as default
+                                customers_data[email]['booking_status_counts']['confirmed'] += 1
+                                    
+                except Exception as e:
+                    print(f"Error reading {db_path}: {e}")
+                    continue
+    
+    # Convert to list and add additional analytics
+    customers_list = []
+    for email, customer_data in customers_data.items():
+        # Calculate favorite time slots
+        time_slot_counts = {}
+        for booking in customer_data['booking_history']:
+            time_slot = booking['time_slot']
+            time_slot_counts[time_slot] = time_slot_counts.get(time_slot, 0) + 1
+        
+        # Get top 3 favorite time slots
+        favorite_slots = sorted(time_slot_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+        customer_data['favorite_time_slots'] = [slot[0] for slot in favorite_slots]
+        
+        # Calculate customer tier based on booking count
+        total_bookings = customer_data['total_bookings']
+        if total_bookings >= 10:
+            customer_data['customer_tier'] = 'VIP'
+        elif total_bookings >= 5:
+            customer_data['customer_tier'] = 'Premium'
+        elif total_bookings >= 2:
+            customer_data['customer_tier'] = 'Regular'
+        else:
+            customer_data['customer_tier'] = 'New'
+            
+        # Sort booking history by date (most recent first)
+        customer_data['booking_history'].sort(key=lambda x: x['date'], reverse=True)
+        
+        customers_list.append(customer_data)
+    
+    # Sort customers by total bookings (most active first)
+    customers_list.sort(key=lambda x: x['total_bookings'], reverse=True)
+    
+    return customers_list
+
+@router.get("/admin/customer/{email}")
+def get_customer_detail(email: str, user=Depends(admin_required)):
+    """Get detailed information for a specific customer (admin only)."""
+    customer_data = {
+        'customer_info': None,
+        'booking_history': [],
+        'total_bookings': 0,
+        'total_spent': 0.0,
+        'booking_trends': {},
+        'monthly_activity': {}
+    }
+    
+    weekly_db_dir = "backend/weekly_databases"
+    
+    if os.path.exists(weekly_db_dir):
+        for fname in os.listdir(weekly_db_dir):
+            if fname.endswith('.db') and 'bookings_' in fname:
+                db_path = os.path.join(weekly_db_dir, fname)
+                try:
+                    with sqlite3.connect(db_path) as conn:
+                        conn.row_factory = sqlite3.Row
+                        c = conn.cursor()
+                        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bookings'")
+                        if c.fetchone():
+                            c.execute("""
+                                SELECT * FROM bookings 
+                                WHERE email = ? 
+                                ORDER BY date DESC, created_at DESC
+                            """, (email,))
+                            bookings = [dict(row) for row in c.fetchall()]
+                            
+                            for booking in bookings:
+                                if not customer_data['customer_info']:
+                                    customer_data['customer_info'] = {
+                                        'name': booking['name'],
+                                        'email': booking['email'],
+                                        'phone': booking['phone'],
+                                        'address': booking['address'],
+                                        'city': booking['city'],
+                                        'zipcode': booking['zipcode'],
+                                        'contact_preference': booking['contact_preference']
+                                    }
+                                
+                                # Add to booking history with proper formatting
+                                customer_data['booking_history'].append({
+                                    'id': booking['id'],
+                                    'date': booking['date'],
+                                    'time_slot': booking['time_slot'],
+                                    'status': 'confirmed',  # Default since column doesn't exist
+                                    'deposit_received': bool(booking['deposit_received']),
+                                    'created_at': booking['created_at']
+                                })
+                                
+                                customer_data['total_bookings'] += 1
+                                customer_data['total_spent'] += 55.0
+                                
+                                # Track monthly activity
+                                month_key = booking['date'][:7]  # YYYY-MM format
+                                customer_data['monthly_activity'][month_key] = customer_data['monthly_activity'].get(month_key, 0) + 1
+                                
+                except Exception as e:
+                    print(f"Error reading {db_path}: {e}")
+                    continue
+    
+    if not customer_data['customer_info']:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    
+    return customer_data
+
+@router.get("/admin/customer-analytics")
+def get_customer_analytics(user=Depends(admin_required)):
+    """Get customer analytics and insights (admin only)."""
+    analytics = {
+        'total_customers': 0,
+        'new_customers_this_month': 0,
+        'returning_customers': 0,
+        'customer_tiers': {
+            'VIP': 0,
+            'Premium': 0,
+            'Regular': 0,
+            'New': 0
+        },
+        'top_customers': [],
+        'booking_patterns': {},
+        'retention_rate': 0.0
+    }
+    
+    customers_data = {}
+    current_month = datetime.now().strftime('%Y-%m')
+    
+    weekly_db_dir = "backend/weekly_databases"
+    
+    if os.path.exists(weekly_db_dir):
+        for fname in os.listdir(weekly_db_dir):
+            if fname.endswith('.db') and 'bookings_' in fname:
+                db_path = os.path.join(weekly_db_dir, fname)
+                try:
+                    with sqlite3.connect(db_path) as conn:
+                        conn.row_factory = sqlite3.Row
+                        c = conn.cursor()
+                        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bookings'")
+                        if c.fetchone():
+                            c.execute("SELECT * FROM bookings ORDER BY created_at DESC")
+                            bookings = [dict(row) for row in c.fetchall()]
+                            
+                            for booking in bookings:
+                                email = booking['email']
+                                if email not in customers_data:
+                                    customers_data[email] = {
+                                        'name': booking['name'],
+                                        'email': email,
+                                        'total_bookings': 0,
+                                        'total_spent': 0.0,
+                                        'first_booking': booking['created_at'],
+                                        'last_booking': booking['created_at']
+                                    }
+                                
+                                customers_data[email]['total_bookings'] += 1
+                                customers_data[email]['total_spent'] += 55.0
+                                
+                                # Update first/last booking dates
+                                if booking['created_at'] < customers_data[email]['first_booking']:
+                                    customers_data[email]['first_booking'] = booking['created_at']
+                                if booking['created_at'] > customers_data[email]['last_booking']:
+                                    customers_data[email]['last_booking'] = booking['created_at']
+                                
+                                # Check if new customer this month
+                                if booking['created_at'].startswith(current_month):
+                                    if customers_data[email]['total_bookings'] == 1:
+                                        analytics['new_customers_this_month'] += 1
+                                
+                except Exception as e:
+                    print(f"Error reading {db_path}: {e}")
+                    continue
+    
+    # Calculate analytics
+    analytics['total_customers'] = len(customers_data)
+    
+    # Calculate customer tiers and top customers
+    for customer in customers_data.values():
+        total_bookings = customer['total_bookings']
+        
+        if total_bookings >= 10:
+            analytics['customer_tiers']['VIP'] += 1
+        elif total_bookings >= 5:
+            analytics['customer_tiers']['Premium'] += 1
+        elif total_bookings >= 2:
+            analytics['customer_tiers']['Regular'] += 1
+        else:
+            analytics['customer_tiers']['New'] += 1
+    
+    # Get top 10 customers
+    top_customers = sorted(customers_data.values(), key=lambda x: x['total_bookings'], reverse=True)[:10]
+    analytics['top_customers'] = top_customers
+    
+    # Calculate retention rate (customers with more than 1 booking)
+    returning_customers = sum(1 for customer in customers_data.values() if customer['total_bookings'] > 1)
+    analytics['returning_customers'] = returning_customers
+    if analytics['total_customers'] > 0:
+        analytics['retention_rate'] = (returning_customers / analytics['total_customers']) * 100
+    
+    return analytics
 
 # Phase 1: WebSocket endpoint is registered in main.py directly
 # This avoids conflicts with the router prefix
