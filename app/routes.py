@@ -9,13 +9,13 @@ from .auth import (
 )
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from typing import List
 import os
 import sqlite3
 from .email_utils import (
     send_booking_email,
     send_customer_confirmation,
     send_waitlist_confirmation,
-    send_cancellation_email,
     send_waitlist_slot_opened,
     send_waitlist_position_email,
     send_deposit_confirmation_email,
@@ -29,6 +29,7 @@ from .deposit_tasks import schedule_deposit_jobs
 from .utils import (
     get_latest_user_info, upsert_newsletter_entry, notify_all_waitlist_users
 )
+from .websocket_manager import websocket_manager
 import csv
 from io import StringIO
 from slowapi import Limiter
@@ -405,7 +406,7 @@ def change_own_password(
 
 @router.post("/book")
 @limiter.limit("5/minute")
-def book_service(data: BookingCreate, background_tasks: BackgroundTasks, request: Request):
+async def book_service(data: BookingCreate, background_tasks: BackgroundTasks, request: Request):
     """Create a new booking and send confirmation emails."""
     logger.info(f"Received booking request: {data.model_dump()}")
     
@@ -416,6 +417,8 @@ def book_service(data: BookingCreate, background_tasks: BackgroundTasks, request
     logger.info(f"Booking count for {data.date} {data.time_slot}: {count}")
     if count >= 2:
         raise HTTPException(status_code=400, detail="This slot is fully booked.")
+    
+    # Insert the booking
     c.execute("""
         INSERT INTO bookings (name, phone, email, address, city, zipcode, date, time_slot, contact_preference, created_at, deposit_received)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -427,12 +430,34 @@ def book_service(data: BookingCreate, background_tasks: BackgroundTasks, request
     ))
     booking_id = c.lastrowid
     conn.commit()
+    
+    # Calculate new status after booking
+    new_count = count + 1
+    if new_count == 1:
+        new_status = "waiting"
+    elif new_count >= 2:
+        new_status = "booked"
+    else:
+        new_status = "available"
+    
+    # Send real-time WebSocket notification
+    try:
+        await websocket_manager.notify_availability_change(
+            data.date, 
+            data.time_slot, 
+            new_status
+        )
+        logger.info(f"WebSocket notification sent for {data.date} {data.time_slot}: {new_status}")
+    except Exception as e:
+        logger.error(f"Failed to send WebSocket notification: {e}")
+    
+    # Background tasks
     background_tasks.add_task(send_booking_email, data)
     background_tasks.add_task(send_customer_confirmation, data)
     schedule_deposit_jobs(booking_id, data.date)
     # Upsert newsletter entry
     upsert_newsletter_entry(data.model_dump(), "booking")
-    return {"message": "Booking successful"}
+    return {"message": "Booking successful", "booking_id": booking_id}
 
 # Example for any admin route in app/routes.py
 @router.get("/admin/weekly")
@@ -500,6 +525,51 @@ def get_availability(date: str):
         result[slot] = {"status": status}
     return result
 
+# Phase 1: Bulk availability endpoint for enhanced caching
+@router.post("/availability/bulk")
+async def get_bulk_availability(dates: List[str]):
+    """Get availability status for multiple dates at once - Phase 1 improvement"""
+    try:
+        result = {}
+        
+        for date in dates:
+            try:
+                conn = get_week_db(date)
+                c = conn.cursor()
+                c.execute(
+                    "SELECT time_slot, COUNT(*) as count FROM bookings WHERE date = ? GROUP BY time_slot",
+                    (date,)
+                )
+                slots = {row["time_slot"]: row["count"] for row in c.fetchall()}
+                all_slots = ['12:00 PM', '3:00 PM', '6:00 PM', '9:00 PM']
+                
+                date_result = {}
+                for slot in all_slots:
+                    count = slots.get(slot, 0)
+                    if count == 0:
+                        status = "available"
+                    elif count == 1:
+                        status = "waiting"
+                    else:
+                        status = "booked"
+                    date_result[slot] = {"status": status}
+                
+                result[date] = date_result
+                
+            except Exception as e:
+                logger.warning(f"Error fetching availability for {date}: {e}")
+                # Return default available status on error
+                result[date] = {
+                    slot: {"status": "available"} for slot in ['12:00 PM', '3:00 PM', '6:00 PM', '9:00 PM']
+                }
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Bulk availability error: {e}")
+        raise HTTPException(status_code=500, detail="Error fetching bulk availability")
+
+
 @router.post("/waitlist")
 @limiter.limit("10/minute")  # 10 waitlist joins per minute per IP
 def join_waitlist(data: WaitlistCreate, background_tasks: BackgroundTasks, request: Request):
@@ -527,7 +597,7 @@ def join_waitlist(data: WaitlistCreate, background_tasks: BackgroundTasks, reque
     return {"message": f"Added to waitlist. You are number {position} in line."}
 
 @router.delete("/admin/cancel_booking")
-def cancel_booking(
+async def cancel_booking(
     booking_id: int,
     body: CancelBookingRequest = Body(...),
     user=Depends(admin_required)
@@ -546,11 +616,37 @@ def cancel_booking(
                 c.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,))
                 booking = c.fetchone()
                 if booking:
+                    # Check count before deletion for WebSocket notification
+                    c.execute("SELECT COUNT(*) FROM bookings WHERE date = ? AND time_slot = ?", 
+                             (booking["date"], booking["time_slot"]))
+                    count_before = c.fetchone()[0]
+                    
                     c.execute("DELETE FROM bookings WHERE id = ?", (booking_id,))
                     conn.commit()
                     found = True
                     cancelled_booking = dict(booking)
                     logger.info(f"Admin {user['username']} cancelled booking {booking_id} for reason: {reason}")
+                    
+                    # Calculate new status after cancellation
+                    new_count = count_before - 1
+                    if new_count == 0:
+                        new_status = "available"
+                    elif new_count == 1:
+                        new_status = "waiting"
+                    else:
+                        new_status = "booked"
+                    
+                    # Send real-time WebSocket notification
+                    try:
+                        await websocket_manager.notify_availability_change(
+                            booking["date"], 
+                            booking["time_slot"], 
+                            new_status
+                        )
+                        logger.info(f"WebSocket notification sent for cancellation {booking['date']} {booking['time_slot']}: {new_status}")
+                    except Exception as e:
+                        logger.error(f"Failed to send WebSocket notification: {e}")
+                    
                     try:
                         # Create a booking object for the new email function
                         booking_obj = type("Booking", (), {
@@ -783,7 +879,7 @@ def remove_waitlist_user(waitlist_id: int, user=Depends(admin_required)):
     return {"message": f"Waitlist entry {waitlist_id} removed."}
 
 @router.post("/admin/waitlist/{waitlist_id}/move_to_booking")
-def move_waitlist_to_booking(waitlist_id: int, user=Depends(admin_required)):
+async def move_waitlist_to_booking(waitlist_id: int, user=Depends(admin_required)):
     """
     Admin moves a user from the waitlist to the bookings table (if slot is available).
     Fetches user info from previous bookings if available, and notifies the user.
@@ -797,12 +893,16 @@ def move_waitlist_to_booking(waitlist_id: int, user=Depends(admin_required)):
             raise HTTPException(status_code=404, detail="Waitlist entry not found")
         # Use utility to fetch latest info
         address, city, zipcode, contact_preference = get_latest_user_info(entry["email"])
+        
+        # Check current booking count
         c.execute(
             "SELECT COUNT(*) FROM bookings WHERE date = ? AND time_slot = ?",
             (entry["preferred_date"], entry["preferred_time"])
         )
-        if c.fetchone()[0] >= 2:
+        current_count = c.fetchone()[0]
+        if current_count >= 2:
             raise HTTPException(status_code=400, detail="Slot is fully booked")
+            
         booking_data = {
             "name": entry["name"],
             "phone": entry["phone"],
@@ -824,6 +924,27 @@ def move_waitlist_to_booking(waitlist_id: int, user=Depends(admin_required)):
         ))
         c.execute("DELETE FROM waitlist WHERE id = ?", (waitlist_id,))
         conn.commit()
+        
+        # Calculate new status after waitlist move
+        new_count = current_count + 1
+        if new_count == 1:
+            new_status = "waiting"
+        elif new_count >= 2:
+            new_status = "booked"
+        else:
+            new_status = "available"
+        
+        # Send real-time WebSocket notification
+        try:
+            await websocket_manager.notify_availability_change(
+                booking_data["date"], 
+                booking_data["time_slot"], 
+                new_status
+            )
+            logger.info(f"WebSocket notification sent for waitlist move {booking_data['date']} {booking_data['time_slot']}: {new_status}")
+        except Exception as e:
+            logger.error(f"Failed to send WebSocket notification: {e}")
+    
     # Send booking confirmation email to user
     send_customer_confirmation(type("Booking", (), booking_data))
     # Upsert newsletter entry
@@ -1068,51 +1189,6 @@ def send_newsletter(
         if not recipients:
             # Log the attempt even if no recipients
             log_activity(
-                username=user["username"],
-                action_type="NEWSLETTER_SENT",
-                entity_type="NEWSLETTER",
-                entity_id=None,
-                description="Newsletter send attempted - no recipients found",
-                reason=f"City filter: {city_filter or 'None'}",
-                details=f"Subject: {subject}"
-            )
-            
-            return {
-                "success": False,
-                "message": "No email recipients found",
-                "sent_count": 0,
-                "failed_count": 0
-            }
-        
-        # Mock email sending (replace with actual email service implementation)
-        sent_count = 0
-        failed_count = 0
-        
-        # TODO: Implement actual email sending logic here
-        # For now, we'll simulate sending
-        for recipient in recipients:
-            try:
-                # This is where you would integrate with your email service
-                # e.g., SendGrid, AWS SES, SMTP, etc.
-                print(f"[MOCK EMAIL] To: {recipient['email']} "
-                      f"({recipient['name']})")
-                print(f"Subject: {subject}")
-                print(f"Message: {message}")
-                sent_count += 1
-            except Exception as e:
-                print(f"Failed to send to {recipient['email']}: {e}")
-                failed_count += 1
-        
-        # Log the newsletter send activity
-        log_activity(
-            username=user["username"],
-            action_type="NEWSLETTER_SENT",
-            entity_type="NEWSLETTER",
-            entity_id=None,
-            description=f"Newsletter sent to {sent_count} recipients",
-            reason=f"Subject: {subject}",
-            details=f"City filter: {city_filter or 'None'}, "
-                    f"Sent: {sent_count}, Failed: {failed_count}, "
                     f"Message length: {len(message)} chars"
         )
         
@@ -1170,4 +1246,8 @@ def admin_all_bookings(user=Depends(admin_required)):
                     continue
     
     return bookings
+
+
+# Phase 1: WebSocket endpoint is registered in main.py directly
+# This avoids conflicts with the router prefix
 
